@@ -1,5 +1,12 @@
+
 {
   "name": "InvoiceConverter Pro",
+  "short_name": "IC Pro",
   "description": "Professional Excel Invoice Transformation Solution with Automated Mapping.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f6f8",
+  "theme_color": "#135bec",
+  "lang": "ko-KR",
   "requestFramePermissions": []
 }

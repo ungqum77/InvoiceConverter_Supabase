@@ -1,5 +1,5 @@
 
-import React, { ErrorInfo, ReactNode } from 'react';
+import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Home } from './pages/Home';
@@ -16,10 +16,10 @@ interface Props { children?: ReactNode; }
 interface State { hasError: boolean; error: Error | null; }
 
 /**
- * Fix: Explicitly extend React.Component to ensure props and children are correctly typed 
- * and recognized by the TypeScript compiler (resolves line 64 error).
+ * Fix: Directly import and extend Component from 'react' to ensure props and state are correctly 
+ * typed and recognized by the compiler (resolves line 63 error where props/state might be seen as missing).
  */
-class ErrorBoundary extends React.Component<Props, State> {
+class ErrorBoundary extends Component<Props, State> {
   // Initialize state using property initializer to ensure it is recognized by TypeScript.
   public state: State = { hasError: false, error: null };
 
