@@ -24,9 +24,13 @@ interface ErrorBoundaryState {
 /**
  * captures errors in the react component tree.
  */
-// Fix: Use the imported Component class directly to ensure 'props' are correctly recognized by TypeScript.
+// Use named Component import to ensure 'state' and 'props' are correctly inherited and typed by TypeScript.
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState = { hasError: false, error: null };
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    // Initialize state properly within the constructor.
+    this.state = { hasError: false, error: null };
+  }
 
   public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
@@ -36,7 +40,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     console.error("Uncaught error:", error, errorInfo);
   }
 
-  public render() {
+  public render(): ReactNode {
+    // Correctly check this.state for errors during rendering.
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -64,7 +69,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
         </div>
       );
     }
-    // Fix: Accessing this.props.children which is now properly inherited from the Component class.
+    
+    // Correctly access this.props.children for normal rendering.
     return this.props.children;
   }
 }
