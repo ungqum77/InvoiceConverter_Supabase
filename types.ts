@@ -1,3 +1,4 @@
+
 export interface Product {
   id: string;
   sku: string;
@@ -12,7 +13,8 @@ export interface Product {
 export interface InvoiceTemplate {
   id: string;
   name: string;
-  headers: string[]; // The headers extracted from the uploaded excel
+  headers: string[]; // (Row 1) Input Headers: 주문서 매핑용 헤더
+  outputHeaders?: string[]; // (Row 2) Output Headers: 최종 출력용 헤더 (Optional)
   user_id?: string; // Supabase owner
 }
 

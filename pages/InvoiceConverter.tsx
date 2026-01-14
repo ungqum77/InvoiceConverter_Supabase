@@ -144,21 +144,37 @@ export const InvoiceConverter: React.FC = () => {
       fileGroups.forEach(group => {
          const tpl = templateMap.get(group.templateId);
          if (!tpl) return;
-         const rows = group.orders.map((o: any) => {
-            const rowData: any = {};
+         
+         // 2단 헤더 로직 적용: 출력용 헤더가 있으면 사용, 없으면 기존 매핑용 헤더 사용
+         const finalHeaders = (tpl.outputHeaders && tpl.outputHeaders.length > 0) ? tpl.outputHeaders : tpl.headers;
+
+         // 데이터 행 생성 (객체 배열이 아닌, 배열의 배열(AOA)로 생성하여 컬럼 순서 보장)
+         const dataRows = group.orders.map((o: any) => {
+            const rowData: any[] = [];
             const product = o.product!;
             let pName = mapping.option && o.originalData[mapping.option] ? String(o.originalData[mapping.option]).trim() : (product.useAdditionalName ? product.additionalName : product.name);
             const ord = String(o.originalData[mapping.orderer] || '').trim();
             const rev = String(o.originalData[mapping.receiver] || '').trim();
             if (ord !== rev) pName += ` 보내는 사람_${ord}`;
-            tpl.headers.forEach(h => {
-               if (PRODUCT_NAME_HEADERS.some(ph => h.includes(ph))) rowData[h] = pName;
-               else rowData[h] = o.originalData[h] || '';
+            
+            // tpl.headers(매핑용 키)를 순회하며 데이터를 찾아 넣음
+            tpl.headers.forEach((h: string) => {
+               if (PRODUCT_NAME_HEADERS.some(ph => h.includes(ph))) {
+                   rowData.push(pName);
+               } else {
+                   rowData.push(o.originalData[h] || '');
+               }
             });
             return rowData;
          });
+
+         // 최종 데이터: [출력용 헤더, ...데이터행들]
+         const finalSheetData = [finalHeaders, ...dataRows];
+         
          const wb = XLSX.utils.book_new();
-         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows, { header: tpl.headers }), "Sheet1");
+         const ws = XLSX.utils.aoa_to_sheet(finalSheetData); // json_to_sheet 대신 aoa_to_sheet 사용
+         
+         XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
          zip.file(`${group.fileName}.xlsx`, XLSX.write(wb, { bookType: 'xlsx', type: 'array' }));
       });
 

@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { Plus, Trash2, Search, Save, X, FileSpreadsheet, Upload, Settings2, Building2, Tag, CheckSquare, Pencil, Lock, Zap, UserCog, LogOut, AlertOctagon, Calendar, History, Clock, Download, ArrowUpCircle, CreditCard, Award, Youtube, AlertTriangle, RefreshCw, ExternalLink, Sparkles, ChevronRight, FileUp, Check } from 'lucide-react';
+import { Plus, Trash2, Search, Save, X, FileSpreadsheet, Upload, Settings2, Building2, Tag, CheckSquare, Pencil, Lock, Zap, UserCog, LogOut, AlertOctagon, Calendar, History, Clock, Download, ArrowUpCircle, CreditCard, Award, Youtube, AlertTriangle, RefreshCw, ExternalLink, Sparkles, ChevronRight, FileUp, Check, ArrowDownCircle } from 'lucide-react';
 import { Product, InvoiceTemplate, UserProfile, ActivityLog, Tier } from '../types';
 import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchTemplates, createTemplate, deleteTemplate, getUserProfile, getUsageStats, createProductsBulk, fetchActivityLogs, fetchAppSettings, AppSettings } from '../services/dbService';
 import { supabase } from '../services/supabase';
@@ -154,7 +153,6 @@ export const ProductManagement: React.FC = () => {
 
   const handleProductDelete = async (id: string) => { if (window.confirm('삭제하시겠습니까?')) { await deleteProduct(id); loadData(); } };
   
-  // Fix: Added handleTemplateDelete function which was missing and causing line 330 error
   const handleTemplateDelete = async (id: string) => {
     if (window.confirm('양식을 삭제하시겠습니까? 관련 제품의 송장 출력이 불가능해질 수 있습니다.')) {
       try {
@@ -170,17 +168,38 @@ export const ProductManagement: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    // Fix: Cast result safely to ensure type compatibility with XLSX.read (resolves line 206 error)
     reader.onload = (evt) => {
       const result = evt.target?.result;
       if (typeof result !== 'string') return;
       const workbook = XLSX.read(result, { type: 'binary' });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) return;
+      const sheet = workbook.Sheets[firstSheetName];
       const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+      
       if (data.length > 0) { 
-          const headers = data[0].map(h => String(h));
+          // 1행: 매핑용 헤더
+          const inputHeaders = data[0].map(h => String(h));
+          // 2행: 출력용 헤더 (존재하지 않거나 비어있으면 1행 사용)
+          let outputHeaders = inputHeaders;
+          
+          if (data.length > 1 && data[1].length > 0) {
+              // 2행이 존재하면 해당 행을 출력용 헤더로 사용
+              // 빈 셀이 있을 경우를 대비해 처리 (보통 undefined나 null일 수 있음)
+              outputHeaders = data[1].map(h => h ? String(h) : '');
+          }
+
           const name = file.name.replace(/\.[^/.]+$/, "");
-          createTemplate({ name, headers }).then(() => loadData()).catch((err: any) => alert(err?.message || "양식 생성 중 오류가 발생했습니다."));
+          
+          createTemplate({ name, headers: inputHeaders, outputHeaders })
+            .then(() => {
+                const msg = data.length > 1 
+                    ? `2단 헤더 양식 등록 완료! \n- 매핑용: ${inputHeaders.length}열\n- 출력용: ${outputHeaders.length}열`
+                    : `양식 등록 완료! (1단 헤더)`;
+                alert(msg);
+                loadData();
+            })
+            .catch((err: any) => alert(err?.message || "양식 생성 중 오류가 발생했습니다."));
       }
     };
     reader.readAsBinaryString(file);
@@ -192,7 +211,6 @@ export const ProductManagement: React.FC = () => {
     if (!file) return;
     setIsBulkLoading(true);
     const reader = new FileReader();
-    // Fix: Properly handle reader result and cast to string for XLSX.read
     reader.onload = async (evt) => {
       try {
         const result = evt.target?.result;
@@ -200,7 +218,13 @@ export const ProductManagement: React.FC = () => {
           throw new Error("파일을 읽을 수 없습니다.");
         }
         const wb = XLSX.read(result, { type: 'binary' });
-        const data = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]) as any[];
+        // Fix: Explicitly check for the sheet name before indexing to avoid type errors
+        const firstSheetName = wb.SheetNames[0];
+        if (!firstSheetName) throw new Error("엑셀 시트가 없습니다.");
+        
+        // Fix: Use 'as any' casting to prevent type errors when sheet type is unknown
+        const sheet = wb.Sheets[firstSheetName as string];
+        const data = XLSX.utils.sheet_to_json(sheet as any) as any[];
         
         const templateMap = new Map(templates.map(t => [t.name.trim(), t.id]));
         const payload: Omit<Product, 'id' | 'user_id'>[] = [];
@@ -247,7 +271,6 @@ export const ProductManagement: React.FC = () => {
   };
 
   const downloadSampleExcel = () => {
-    // 이미지의 양식과 100% 동일하게 헤더 구성
     const data = [
       { 
         "SKU(필수)": "PROD-001", 
@@ -261,7 +284,6 @@ export const ProductManagement: React.FC = () => {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(data);
     
-    // 열 너비 조정
     ws['!cols'] = [{ wch: 15 }, { wch: 20 }, { wch: 15 }, { wch: 25 }, { wch: 25 }, { wch: 20 }];
     
     XLSX.utils.book_append_sheet(wb, ws, "Bulk_Sample");
@@ -332,23 +354,47 @@ export const ProductManagement: React.FC = () => {
                 <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-6 mb-6 flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div className="text-center sm:text-left">
                     <h3 className="text-indigo-900 font-bold text-lg mb-1">새 송장 양식 등록</h3>
-                    <p className="text-indigo-700 text-sm">엑셀 파일을 업로드하면 열 제목을 자동으로 인식합니다.</p>
+                    <p className="text-indigo-700 text-sm mb-2">엑셀 파일을 업로드하면 열 제목을 자동으로 인식합니다.</p>
+                    <div className="text-[11px] text-indigo-500 bg-white/50 p-2 rounded border border-indigo-100 inline-block">
+                        <strong>💡 팁: 2단 헤더 지원</strong><br/>
+                        1행: 주문서의 열 제목 (매핑용)<br/>
+                        2행: 택배사 양식의 열 제목 (출력용)
+                    </div>
                   </div>
                   <input type="file" accept=".xlsx, .xls" ref={templateFileRef} className="hidden" onChange={handleTemplateUpload}/>
                   <Button onClick={() => templateFileRef.current?.click()} icon={<Upload size={18} />}>엑셀 업로드</Button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {templates.map(tpl => (
-                    <div key={tpl.id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
+                    <div key={tpl.id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow relative group">
                       <div className="flex justify-between items-start mb-4">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center text-green-600"><FileSpreadsheet size={20} /></div>
-                          <div><h4 className="font-bold text-slate-900">{tpl.name}</h4><p className="text-[10px] text-slate-500">{tpl.headers.length}개 열</p></div>
+                          <div>
+                              <h4 className="font-bold text-slate-900">{tpl.name}</h4>
+                              <p className="text-[10px] text-slate-500">
+                                  {tpl.headers.length}개 열 
+                                  {tpl.outputHeaders && JSON.stringify(tpl.headers) !== JSON.stringify(tpl.outputHeaders) && (
+                                      <span className="text-indigo-500 font-bold ml-1">(2단 헤더 적용됨)</span>
+                                  )}
+                              </p>
+                          </div>
                         </div>
                         <button onClick={() => handleTemplateDelete(tpl.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={16} /></button>
                       </div>
-                      <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 h-24 overflow-y-auto">
-                        <div className="flex flex-wrap gap-1">{tpl.headers.map(h => <span key={h} className="text-[9px] bg-white border px-1.5 rounded text-slate-500">{h}</span>)}</div>
+                      
+                      <div className="space-y-2">
+                          <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 h-20 overflow-y-auto">
+                            <div className="text-[9px] font-bold text-slate-400 mb-1">매핑용 (주문서)</div>
+                            <div className="flex flex-wrap gap-1">{tpl.headers.map((h, i) => <span key={i} className="text-[9px] bg-white border px-1.5 rounded text-slate-500">{h}</span>)}</div>
+                          </div>
+                          
+                          {tpl.outputHeaders && JSON.stringify(tpl.headers) !== JSON.stringify(tpl.outputHeaders) && (
+                              <div className="bg-indigo-50 rounded-lg p-3 border border-indigo-100 h-20 overflow-y-auto">
+                                <div className="text-[9px] font-bold text-indigo-400 mb-1">출력용 (택배사)</div>
+                                <div className="flex flex-wrap gap-1">{tpl.outputHeaders.map((h, i) => <span key={i} className="text-[9px] bg-white border border-indigo-100 px-1.5 rounded text-indigo-600">{h || '(공란)'}</span>)}</div>
+                              </div>
+                          )}
                       </div>
                     </div>
                   ))}
@@ -446,7 +492,6 @@ export const ProductManagement: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* 구독 업그레이드 섹션 */}
                     {currentTier.id !== 'gold' && (
                         <div className="bg-gradient-to-br from-indigo-600 to-primary rounded-2xl shadow-xl p-8 text-white relative overflow-hidden group">
                             <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
@@ -502,7 +547,6 @@ export const ProductManagement: React.FC = () => {
         </>
       )}
 
-      {/* Product Modal (개별 등록) */}
       {isProductModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-fade-in">
@@ -524,7 +568,6 @@ export const ProductManagement: React.FC = () => {
                 <input required placeholder="예: 대왕 치즈 스틱" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary/20 outline-none transition-all" value={newName} onChange={e => setNewName(e.target.value)} />
               </div>
               
-              {/* 추가 필드: 대체 제품명 */}
               <div className="pt-2 border-t border-slate-50">
                 <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">대체 제품명 (선택)</label>
                 <input placeholder="예: [특가] 대왕 치즈 스틱 1+1" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary/20 outline-none transition-all" value={newAdditionalName} onChange={e => setNewAdditionalName(e.target.value)} />
@@ -558,7 +601,6 @@ export const ProductManagement: React.FC = () => {
         </div>
       )}
 
-      {/* Bulk Import Modal */}
       {isBulkModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in">

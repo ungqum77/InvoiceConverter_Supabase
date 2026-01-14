@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings } from '../services/dbService';
+import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings } from '../services/dbService';
 import { UserProfile, ActivityLog } from '../types';
 import { Button } from '../components/Button';
-import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield } from 'lucide-react';
+import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, IS_CONFIG_ERROR } from '../services/supabase';
@@ -44,7 +44,7 @@ export const AdminDashboard: React.FC = () => {
     const { user: currentUser, isAdmin, isSuperAdmin, loading: authLoading } = useAuth();
     const navigate = useNavigate();
 
-    const [activeTab, setActiveTab] = useState<'users' | 'logs'>('users');
+    const [activeTab, setActiveTab] = useState<'users' | 'logs' | 'settings'>('users');
     const [profiles, setProfiles] = useState<UserProfile[]>([]);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
     const [settings, setSettings] = useState<AppSettings>({
@@ -52,7 +52,11 @@ export const AdminDashboard: React.FC = () => {
         gold_subscription_url: '',
         youtube_tutorial_template: '',
         youtube_tutorial_product: '',
-        youtube_tutorial_convert: ''
+        youtube_tutorial_convert: '',
+        price_silver_original: '',
+        price_silver_sale: '',
+        price_gold_original: '',
+        price_gold_sale: ''
     });
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -102,6 +106,7 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
                 const data = await fetchAllActivityLogs();
                 setLogs(data);
             }
+            // Always fetch settings
             const settingsData = await fetchAppSettings();
             setSettings(settingsData);
         } catch (e: any) {
@@ -124,6 +129,20 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
             loadData();
         } catch (e: any) {
             alert("수정 실패: " + e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSaveSettings = async (e: React.FormEvent) => {
+        e.preventDefault();
+        try {
+            setLoading(true);
+            await updateAppSettings(settings);
+            if (currentUser) await logActivity(currentUser.id, 'UPDATE_SETTINGS', '관리자 설정(가격/URL) 업데이트');
+            alert('설정이 저장되었습니다.');
+        } catch (e: any) {
+            alert('저장 실패: ' + e.message);
         } finally {
             setLoading(false);
         }
@@ -173,6 +192,7 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
                 </div>
                 <div className="flex bg-slate-100 p-1 rounded-lg">
                     <button onClick={() => setActiveTab('users')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'users' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>사용자 관리</button>
+                    <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>시스템 설정</button>
                     <button onClick={() => setActiveTab('logs')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'logs' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>활동 로그</button>
                 </div>
             </div>
@@ -230,6 +250,83 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
                                 )}
                             </tbody>
                         </table>
+                    </div>
+                ) : activeTab === 'settings' ? (
+                    <div className="p-8">
+                        <div className="mb-6 pb-6 border-b border-slate-100">
+                            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-2"><Settings size={20} className="text-primary"/> 시스템 설정 관리</h3>
+                            <p className="text-sm text-slate-500">가격, 할인율, 구독 링크 등 주요 설정을 실시간으로 반영합니다.</p>
+                        </div>
+                        <form onSubmit={handleSaveSettings} className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8">
+                            <div className="space-y-6">
+                                <h4 className="font-bold text-slate-700 flex items-center gap-2"><DollarSign size={16}/> 가격 설정 (Pricing)</h4>
+                                <div className="p-5 bg-slate-50 rounded-xl border border-slate-200 space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">실버 - 정상가 (원)</label>
+                                            <input type="number" className="w-full border rounded p-2 text-sm" value={settings.price_silver_original} onChange={e => setSettings({...settings, price_silver_original: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-blue-600 mb-1">실버 - 판매가 (할인)</label>
+                                            <input type="number" className="w-full border border-blue-200 rounded p-2 text-sm focus:ring-blue-500" value={settings.price_silver_sale} onChange={e => setSettings({...settings, price_silver_sale: e.target.value})} />
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-200">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1">골드 - 정상가 (원)</label>
+                                            <input type="number" className="w-full border rounded p-2 text-sm" value={settings.price_gold_original} onChange={e => setSettings({...settings, price_gold_original: e.target.value})} />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-amber-600 mb-1">골드 - 판매가 (할인)</label>
+                                            <input type="number" className="w-full border border-amber-200 rounded p-2 text-sm focus:ring-amber-500" value={settings.price_gold_sale} onChange={e => setSettings({...settings, price_gold_sale: e.target.value})} />
+                                        </div>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400">* 판매가가 정상가보다 낮을 경우, 메인 화면에 자동으로 '할인 배지'가 표시됩니다.</p>
+                                </div>
+
+                                <h4 className="font-bold text-slate-700 flex items-center gap-2 pt-2"><LinkIcon size={16}/> 결제 및 구독 URL</h4>
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">실버 등급 결제 링크</label>
+                                        <input type="text" className="w-full border rounded p-2 text-sm" placeholder="https://..." value={settings.silver_subscription_url} onChange={e => setSettings({...settings, silver_subscription_url: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">골드 등급 결제 링크</label>
+                                        <input type="text" className="w-full border rounded p-2 text-sm" placeholder="https://..." value={settings.gold_subscription_url} onChange={e => setSettings({...settings, gold_subscription_url: e.target.value})} />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="space-y-6">
+                                <h4 className="font-bold text-slate-700 flex items-center gap-2"><Youtube size={16}/> 튜토리얼 영상 링크</h4>
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">송장 양식 등록 가이드</label>
+                                        <input type="text" className="w-full border rounded p-2 text-sm" value={settings.youtube_tutorial_template} onChange={e => setSettings({...settings, youtube_tutorial_template: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">제품 등록 가이드</label>
+                                        <input type="text" className="w-full border rounded p-2 text-sm" value={settings.youtube_tutorial_product} onChange={e => setSettings({...settings, youtube_tutorial_product: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">송장 변환 가이드</label>
+                                        <input type="text" className="w-full border rounded p-2 text-sm" value={settings.youtube_tutorial_convert} onChange={e => setSettings({...settings, youtube_tutorial_convert: e.target.value})} />
+                                    </div>
+                                </div>
+
+                                <div className="bg-yellow-50 border border-yellow-100 p-4 rounded-xl">
+                                    <h5 className="font-bold text-yellow-800 text-sm mb-2 flex items-center gap-1"><AlertTriangle size={14}/> 주의사항</h5>
+                                    <ul className="text-xs text-yellow-700 space-y-1 list-disc pl-4">
+                                        <li>가격 정보는 숫자만 입력하세요 (콤마 제외).</li>
+                                        <li>저장 버튼을 누르면 즉시 모든 사용자에게 반영됩니다.</li>
+                                    </ul>
+                                </div>
+                                
+                                <div className="pt-4 flex justify-end">
+                                    <Button type="submit" size="lg" icon={<Check size={18}/>}>설정 저장하기</Button>
+                                </div>
+                            </div>
+                        </form>
                     </div>
                 ) : (
                     <div className="p-4 overflow-x-auto">

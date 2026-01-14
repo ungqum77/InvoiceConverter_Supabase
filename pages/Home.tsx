@@ -39,6 +39,35 @@ export const Home: React.FC = () => {
   const silverTier = getTier('silver');
   const goldTier = getTier('gold');
 
+  // Helper component to display price with optional discount
+  const PriceDisplay = ({ original, sale }: { original?: string, sale?: string }) => {
+      const orgPrice = Number(original || 0);
+      const salePrice = Number(sale || 0);
+      
+      const hasDiscount = salePrice > 0 && salePrice < orgPrice;
+      
+      if (hasDiscount) {
+          const discountRate = Math.round(((orgPrice - salePrice) / orgPrice) * 100);
+          return (
+              <div className="flex flex-col items-start">
+                  <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm text-slate-400 line-through">₩{orgPrice.toLocaleString()}</span>
+                      <span className="bg-red-100 text-red-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">{discountRate}% OFF</span>
+                  </div>
+                  <div className="text-3xl font-extrabold text-slate-900">
+                      ₩{salePrice.toLocaleString()} <span className="text-base font-normal text-slate-400">/ 월</span>
+                  </div>
+              </div>
+          );
+      }
+      
+      return (
+          <div className="text-3xl font-extrabold text-slate-900 mb-6 mt-6">
+              ₩{orgPrice.toLocaleString()} <span className="text-base font-normal text-slate-400">/ 월</span>
+          </div>
+      );
+  };
+
   return (
     <div className="flex flex-col min-h-[calc(100vh-64px)]">
       <main className="flex-1">
@@ -106,7 +135,7 @@ export const Home: React.FC = () => {
                       <h3 className="text-lg font-bold text-slate-900 mb-1">FREE (기본)</h3>
                       <p className="text-slate-500 text-sm">개인 판매자 및 소규모 운영</p>
                     </div>
-                    <div className="text-3xl font-extrabold text-slate-900 mb-6">₩0 <span className="text-base font-normal text-slate-400">/ 월</span></div>
+                    <div className="text-3xl font-extrabold text-slate-900 mb-6 mt-6">₩0 <span className="text-base font-normal text-slate-400">/ 월</span></div>
                     <ul className="space-y-4 mb-8 flex-1">
                       <li className="flex items-start gap-3 text-sm text-slate-600"><CheckCircle2 size={18} className="text-primary mt-0.5 shrink-0"/> 최대 제품 등록: {freeTier.max_products}개</li>
                       <li className="flex items-start gap-3 text-sm text-slate-600"><CheckCircle2 size={18} className="text-primary mt-0.5 shrink-0"/> 송장 양식 등록: {freeTier.max_templates}개</li>
@@ -122,7 +151,12 @@ export const Home: React.FC = () => {
                       <h3 className="text-lg font-bold text-slate-900 mb-1">SILVER (실버)</h3>
                       <p className="text-slate-500 text-sm">성장하는 온라인 스토어 권장</p>
                     </div>
-                    <div className="text-3xl font-extrabold text-slate-900 mb-6">₩5,500 <span className="text-base font-normal text-slate-400">/ 월</span></div>
+                    
+                    <PriceDisplay 
+                        original={settings?.price_silver_original} 
+                        sale={settings?.price_silver_sale} 
+                    />
+
                     <ul className="space-y-4 mb-8 flex-1">
                       <li className="flex items-start gap-3 text-sm text-slate-600"><CheckCircle2 size={18} className="text-primary mt-0.5 shrink-0"/> 최대 제품 등록: {silverTier.max_products}개</li>
                       <li className="flex items-start gap-3 text-sm text-slate-600"><CheckCircle2 size={18} className="text-primary mt-0.5 shrink-0"/> 송장 양식 등록: {silverTier.max_templates}개</li>
@@ -143,7 +177,12 @@ export const Home: React.FC = () => {
                       <h3 className="text-lg font-bold text-slate-900 mb-1">GOLD (골드)</h3>
                       <p className="text-slate-500 text-sm">대규모 쇼핑몰 및 물류 창고</p>
                     </div>
-                    <div className="text-3xl font-extrabold text-slate-900 mb-6">₩8,800 <span className="text-base font-normal text-slate-400">/ 월</span></div>
+
+                    <PriceDisplay 
+                        original={settings?.price_gold_original} 
+                        sale={settings?.price_gold_sale} 
+                    />
+
                     <ul className="space-y-4 mb-8 flex-1">
                       <li className="flex items-start gap-3 text-sm text-slate-600"><CheckCircle2 size={18} className="text-primary mt-0.5 shrink-0"/> 최대 제품 등록: {goldTier.max_products}개</li>
                       <li className="flex items-start gap-3 text-sm text-slate-600"><CheckCircle2 size={18} className="text-primary mt-0.5 shrink-0"/> 송장 양식 등록: {goldTier.max_templates}개</li>

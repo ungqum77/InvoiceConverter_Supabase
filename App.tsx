@@ -1,4 +1,3 @@
-
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
@@ -16,12 +15,14 @@ interface Props { children?: ReactNode; }
 interface State { hasError: boolean; error: Error | null; }
 
 /**
- * Fix: Directly import and extend Component from 'react' to ensure props and state are correctly 
- * typed and recognized by the compiler (resolves line 63 error where props/state might be seen as missing).
+ * Fix: Extended React.Component to ensure props typing is correctly handled.
  */
 class ErrorBoundary extends Component<Props, State> {
-  // Initialize state using property initializer to ensure it is recognized by TypeScript.
   public state: State = { hasError: false, error: null };
+
+  constructor(props: Props) {
+    super(props);
+  }
 
   public static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
@@ -32,7 +33,6 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   public render() {
-    // Correctly accessing 'this.state' and 'this.props' through class inheritance.
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">

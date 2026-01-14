@@ -17,7 +17,8 @@ const mapProductFromDB = (data: any): Product => ({
 const mapTemplateFromDB = (data: any): InvoiceTemplate => ({
   id: data.id,
   name: data.name,
-  headers: data.headers, 
+  headers: data.headers,
+  outputHeaders: data.output_headers || data.headers, // Fallback to headers if output_headers is null
   user_id: data.user_id,
 });
 
@@ -42,13 +43,19 @@ export const fetchAllTiers = async (): Promise<Tier[]> => {
     return Object.values(DEFAULT_TIERS);
 };
 
-// --- App Settings (URLs) ---
+// --- App Settings (URLs & Prices) ---
 export interface AppSettings {
+    // URLs
     silver_subscription_url: string;
     gold_subscription_url: string;
     youtube_tutorial_template: string;
     youtube_tutorial_product: string;
     youtube_tutorial_convert: string;
+    // Prices (Stored as string in DB, parsed in UI)
+    price_silver_original: string;
+    price_silver_sale: string;
+    price_gold_original: string;
+    price_gold_sale: string;
 }
 
 export const SETTING_KEYS: (keyof AppSettings)[] = [
@@ -56,7 +63,11 @@ export const SETTING_KEYS: (keyof AppSettings)[] = [
     'gold_subscription_url',
     'youtube_tutorial_template',
     'youtube_tutorial_product',
-    'youtube_tutorial_convert'
+    'youtube_tutorial_convert',
+    'price_silver_original',
+    'price_silver_sale',
+    'price_gold_original',
+    'price_gold_sale'
 ];
 
 export const fetchAppSettings = async (): Promise<AppSettings> => {
@@ -65,7 +76,12 @@ export const fetchAppSettings = async (): Promise<AppSettings> => {
         gold_subscription_url: '',
         youtube_tutorial_template: '',
         youtube_tutorial_product: '',
-        youtube_tutorial_convert: ''
+        youtube_tutorial_convert: '',
+        // Default Pricing (Fallback)
+        price_silver_original: '11000',
+        price_silver_sale: '5500',
+        price_gold_original: '15000',
+        price_gold_sale: '8800'
     };
 
     if (!supabase) {
@@ -197,7 +213,19 @@ export const fetchTemplates = async (): Promise<InvoiceTemplate[]> => {
 export const createTemplate = async (template: Omit<InvoiceTemplate, 'id' | 'user_id'>): Promise<InvoiceTemplate> => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('인증이 만료되었습니다.');
-  const { data, error } = await supabase.from('invoice_templates').insert({ user_id: user.id, name: template.name, headers: template.headers }).select().single();
+  
+  const payload: any = { 
+    user_id: user.id, 
+    name: template.name, 
+    headers: template.headers 
+  };
+  
+  // outputHeaders가 있는 경우 추가 (DB 컬럼이 존재해야 함)
+  if (template.outputHeaders && template.outputHeaders.length > 0) {
+      payload.output_headers = template.outputHeaders;
+  }
+
+  const { data, error } = await supabase.from('invoice_templates').insert(payload).select().single();
   if (error) throw error;
   await logActivity(user.id, 'CREATE_TEMPLATE', `송장 양식 '${template.name}' 생성`);
   return mapTemplateFromDB(data);
