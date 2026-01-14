@@ -12,14 +12,20 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from './components/Button';
 
 // --- ErrorBoundary Component ---
-// [Fix] line 59: Rename interfaces to avoid potential shadowing issues and explicitly use React.Component with typed generics
-interface ErrorBoundaryProps { children?: ReactNode; }
-interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
+interface ErrorBoundaryProps { 
+  children?: ReactNode; 
+}
+
+interface ErrorBoundaryState { 
+  hasError: boolean; 
+  error: Error | null; 
+}
 
 /**
- * Fix: Explicitly use React.Component to ensure props typing is correctly handled.
+ * captures errors in the react component tree.
  */
-class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+// Fix: Use the imported Component class directly to ensure 'props' are correctly recognized by TypeScript.
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   public state: ErrorBoundaryState = { hasError: false, error: null };
 
   public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
@@ -58,6 +64,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
         </div>
       );
     }
+    // Fix: Accessing this.props.children which is now properly inherited from the Component class.
     return this.props.children;
   }
 }
