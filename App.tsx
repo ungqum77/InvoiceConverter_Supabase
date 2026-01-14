@@ -1,3 +1,4 @@
+
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
@@ -11,16 +12,17 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from './components/Button';
 
 // --- ErrorBoundary Component ---
-interface Props { children?: ReactNode; }
-interface State { hasError: boolean; error: Error | null; }
+// [Fix] line 59: Rename interfaces to avoid potential shadowing issues and explicitly use React.Component with typed generics
+interface ErrorBoundaryProps { children?: ReactNode; }
+interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
 
 /**
- * Fix: Extended React.Component to ensure props typing is correctly handled.
+ * Fix: Explicitly use React.Component to ensure props typing is correctly handled.
  */
-class ErrorBoundary extends Component<Props, State> {
-  public state: State = { hasError: false, error: null };
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  public state: ErrorBoundaryState = { hasError: false, error: null };
 
-  public static getDerivedStateFromError(error: Error): State {
+  public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
   }
 
