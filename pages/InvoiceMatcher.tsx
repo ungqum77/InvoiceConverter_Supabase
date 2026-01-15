@@ -189,7 +189,9 @@ export const InvoiceMatcher: React.FC = () => {
                     
                     <div className="space-y-4 mb-8">
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 mb-1">원본 주문서의 '주문번호' 열</label>
+                            <label className="block text-xs font-bold text-slate-500 mb-1">
+                                원본 주문서의 '공통 값<span className="text-indigo-600 ml-1">(예시 상품발주번호)</span>' 열
+                            </label>
                             <select 
                                 className="w-full text-sm border-slate-200 rounded-lg p-2.5 focus:ring-primary focus:border-primary disabled:bg-slate-100"
                                 value={mapping.originalOrderCol}
