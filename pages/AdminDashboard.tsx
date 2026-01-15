@@ -1,9 +1,8 @@
-
 import React, { useEffect, useState, useMemo } from 'react';
 import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings } from '../services/dbService';
 import { UserProfile, ActivityLog } from '../types';
 import { Button } from '../components/Button';
-import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag } from 'lucide-react';
+import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, IS_CONFIG_ERROR } from '../services/supabase';
@@ -195,6 +194,22 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
                     <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>시스템 설정</button>
                     <button onClick={() => setActiveTab('logs')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${activeTab === 'logs' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>활동 로그</button>
                 </div>
+            </div>
+
+            {/* Quick Actions / Hidden Features */}
+            <div className="mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <button 
+                    onClick={() => navigate('/admin/match')}
+                    className="flex items-center gap-4 p-5 bg-gradient-to-br from-indigo-500 to-primary rounded-xl text-white shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5"
+                >
+                    <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur-sm">
+                        <Merge size={24} />
+                    </div>
+                    <div className="text-left">
+                        <h3 className="font-bold text-lg">배송 정보 매칭</h3>
+                        <p className="text-xs text-indigo-100">원본 주문서에 운송장 번호 병합</p>
+                    </div>
+                </button>
             </div>
 
             {/* SQL 패치 가이드 */}

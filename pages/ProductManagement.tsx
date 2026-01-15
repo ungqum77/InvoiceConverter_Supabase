@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { Plus, Trash2, Search, Save, X, FileSpreadsheet, Upload, Settings2, Building2, Tag, CheckSquare, Pencil, Lock, Zap, UserCog, LogOut, AlertOctagon, Calendar, History, Clock, Download, ArrowUpCircle, CreditCard, Award, Youtube, AlertTriangle, RefreshCw, ExternalLink, Sparkles, ChevronRight, FileUp, Check, ArrowDownCircle } from 'lucide-react';
@@ -174,8 +175,8 @@ export const ProductManagement: React.FC = () => {
       const workbook = XLSX.read(result, { type: 'binary' });
       const firstSheetName = workbook.SheetNames[0];
       if (!firstSheetName) return;
-      const sheet = workbook.Sheets[firstSheetName];
-      const data = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+      const sheet = workbook.Sheets[String(firstSheetName)];
+      const data = XLSX.utils.sheet_to_json(sheet as any, { header: 1 }) as any[][];
       
       if (data.length > 0) { 
           // 1행: 매핑용 헤더
@@ -222,11 +223,12 @@ export const ProductManagement: React.FC = () => {
         const firstSheetName = wb.SheetNames[0];
         if (!firstSheetName) throw new Error("엑셀 시트가 없습니다.");
         
-        // Fix: Use 'as any' casting to prevent type errors when sheet type is unknown
-        const sheet = wb.Sheets[firstSheetName as string];
+        // Fix: Use String() to ensure key is string
+        const sheet = wb.Sheets[String(firstSheetName)];
         const data = XLSX.utils.sheet_to_json(sheet as any) as any[];
         
-        const templateMap = new Map(templates.map(t => [t.name.trim(), t.id]));
+        // [Fix] line 248: Explicitly type Map to ensure values are treated as string and avoid 'unknown' inference
+        const templateMap = new Map<string, string>(templates.map(t => [t.name.trim(), t.id]));
         const payload: Omit<Product, 'id' | 'user_id'>[] = [];
 
         data.forEach((row, idx) => {

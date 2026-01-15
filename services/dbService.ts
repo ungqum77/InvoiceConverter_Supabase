@@ -1,4 +1,3 @@
-
 import { supabase } from './supabase';
 import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog } from '../types';
 
@@ -34,7 +33,7 @@ export const fetchAllTiers = async (): Promise<Tier[]> => {
     if (supabase) {
         try {
             const { data, error } = await supabase.from('tiers').select('*').order('max_products', { ascending: true });
-            if (error) throw error;
+            if (error) return Object.values(DEFAULT_TIERS);
             return data || Object.values(DEFAULT_TIERS);
         } catch (e) {
             return Object.values(DEFAULT_TIERS);
@@ -89,20 +88,25 @@ export const fetchAppSettings = async (): Promise<AppSettings> => {
     }
 
     try {
-        const { data, error } = await supabase.from('app_settings').select('*');
-        if (error) throw error;
+        // 비인증 세션(anon)에서도 app_settings를 읽을 수 있도록 정책이 설정되어 있어야 함
+        const { data, error } = await supabase.from('app_settings').select('key, value');
+        
+        // RLS 정책 등으로 인해 에러가 발생해도 중단하지 않고 기본값 반환
+        if (error) {
+            console.warn("Public settings fetch blocked by RLS, using default values.");
+            return defaults;
+        }
         
         const settings: any = { ...defaults };
-        if (data) {
+        if (data && data.length > 0) {
             data.forEach((row: any) => {
-                if (SETTING_KEYS.includes(row.key)) {
-                    settings[row.key] = row.value || '';
+                if (SETTING_KEYS.includes(row.key as keyof AppSettings)) {
+                    settings[row.key as keyof AppSettings] = row.value || '';
                 }
             });
         }
         return settings;
     } catch (e) {
-        console.warn("Settings fetch failed, returning defaults:", e);
         return defaults;
     }
 };
@@ -182,8 +186,6 @@ export const updateUserProfile = async (userId: string, updates: any) => {
     if (supabase) {
         const { error } = await supabase.from('profiles').update(updates).eq('id', userId);
         if (error) throw error;
-    } else {
-        console.log("Demo mode: Update user profile", userId, updates);
     }
 };
 
@@ -220,7 +222,6 @@ export const createTemplate = async (template: Omit<InvoiceTemplate, 'id' | 'use
     headers: template.headers 
   };
   
-  // outputHeaders가 있는 경우 추가 (DB 컬럼이 존재해야 함)
   if (template.outputHeaders && template.outputHeaders.length > 0) {
       payload.output_headers = template.outputHeaders;
   }
@@ -248,7 +249,15 @@ export const fetchProducts = async (): Promise<Product[]> => {
 export const createProduct = async (product: Omit<Product, 'id' | 'user_id'>): Promise<Product> => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('인증이 만료되었습니다.');
-  const { data, error } = await supabase.from('products').insert({ user_id: user.id, sku: product.sku, name: product.name, additional_name: product.additionalName, use_additional_name: product.useAdditionalName, supplier_name: product.supplierName, template_id: product.templateId }).select().single();
+  const { data, error } = await supabase.from('products').insert({ 
+    user_id: user.id, 
+    sku: product.sku, 
+    name: product.name, 
+    additional_name: product.additionalName, 
+    use_additional_name: product.useAdditionalName, 
+    supplier_name: product.supplierName, 
+    template_id: product.templateId 
+  }).select().single();
   if (error) throw error;
   await logActivity(user.id, 'CREATE_PRODUCT', `제품 '${product.sku}' 등록`);
   return mapProductFromDB(data);
@@ -257,7 +266,15 @@ export const createProduct = async (product: Omit<Product, 'id' | 'user_id'>): P
 export const createProductsBulk = async (products: Omit<Product, 'id' | 'user_id'>[]) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
-    const payload = products.map(p => ({ user_id: user.id, sku: p.sku, name: p.name, additional_name: p.additionalName, use_additional_name: p.useAdditionalName, supplier_name: p.supplierName, template_id: p.templateId }));
+    const payload = products.map(p => ({ 
+      user_id: user.id, 
+      sku: p.sku, 
+      name: p.name, 
+      additional_name: p.additionalName, 
+      use_additional_name: p.useAdditionalName, 
+      supplier_name: p.supplierName, 
+      template_id: p.templateId 
+    }));
     const { error } = await supabase.from('products').insert(payload);
     if (error) throw error;
     await logActivity(user.id, 'CREATE_PRODUCT_BULK', `${products.length}개의 제품 대량 등록`);
