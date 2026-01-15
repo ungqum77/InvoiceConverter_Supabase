@@ -1,5 +1,4 @@
-
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Home } from './pages/Home';
@@ -7,6 +6,7 @@ import { ProductManagement } from './pages/ProductManagement';
 import { InvoiceConverter } from './pages/InvoiceConverter';
 import { Auth } from './pages/Auth';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { InvoiceMatcher } from './pages/InvoiceMatcher';
 import { AuthProvider } from './contexts/AuthContext';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from './components/Button';
@@ -24,11 +24,9 @@ interface ErrorBoundaryState {
 /**
  * captures errors in the react component tree.
  */
-// Use named Component import to ensure 'state' and 'props' are correctly inherited and typed by TypeScript.
-class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    // Initialize state properly within the constructor.
     this.state = { hasError: false, error: null };
   }
 
@@ -41,7 +39,6 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   public render(): ReactNode {
-    // Correctly check this.state for errors during rendering.
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -70,7 +67,6 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       );
     }
     
-    // Correctly access this.props.children for normal rendering.
     return this.props.children;
   }
 }
@@ -88,6 +84,7 @@ const App: React.FC = () => {
               <Route path="/products" element={<ProductManagement />} />
               <Route path="/convert" element={<InvoiceConverter />} />
               <Route path="/admin" element={<AdminDashboard />} />
+              <Route path="/admin/match" element={<InvoiceMatcher />} />
             </Routes>
           </div>
         </HashRouter>
