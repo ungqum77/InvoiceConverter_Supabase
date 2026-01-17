@@ -1,64 +1,270 @@
 <!DOCTYPE html>
-<html lang="ko" class="light">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    
-    <!-- 브랜딩 일치화: 송장.com -->
-    <title>송장.com - 3초 만에 엑셀 주문서를 송장으로</title>
-    <meta name="description" content="스마트스토어, 쿠팡 엑셀 주문서를 택배사 송장 양식으로 3초 만에 변환하세요. SKU 기반 자동 매핑 솔루션." />
-    <meta name="keywords" content="송장.com, 송장변환, 엑셀송장, SKU매핑, 발주관리" />
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <!-- Open Graph -->
-    <meta property="og:type" content="website" />
-    <meta property="og:title" content="송장.com - 3초 송장 변환 솔루션" />
-    <meta property="og:description" content="복잡한 엑셀 주문서를 클릭 한 번으로 택배사 양식에 맞춰 자동 변환해 드립니다." />
-    <meta property="og:url" content="https://www.songjang.com/" />
-    <meta property="og:site_name" content="송장.com" />
+    <title>퍼펙트송장 - 쇼핑몰 송장 업무 혁신</title>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Inter', 'Noto Sans KR', 'sans-serif'],
-            },
-            colors: {
-              primary: {
-                DEFAULT: '#135bec',
-                hover: '#0e46c5',
-                light: '#eff6ff',
-              }
-            }
-          }
+    <meta name="description" content="여러 쇼핑몰의 주문을 한 곳에서 수집하고, 복잡한 엑셀 작업 없이 클릭 한 번으로 송장을 자동으로 입력하는 퍼펙트송장입니다. 무료 체험으로 업무 효율을 높이세요.">
+
+    <meta name="keywords" content="퍼펙트송장, 쇼핑몰주문관리, 송장자동화, 엑셀송장, 스마트스토어송장, 쿠팡송장, 쇼핑몰통합관리">
+
+    <meta name="robots" content="index, follow">
+
+    <link rel="canonical" href="https://www.songjang.com/">
+
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://www.songjang.com/">
+    <meta property="og:title" content="퍼펙트송장 - 1초 만에 끝내는 송장 업무">
+    <meta property="og:description" content="복잡한 쇼핑몰 주문 수집과 송장 입력, 이제 퍼펙트송장으로 클릭 한 번에 해결하세요!">
+    <meta property="og:site_name" content="퍼펙트송장">
+    <meta property="og:locale" content="ko_KR">
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         }
-      }
-    </script>
-    <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@^19.2.3",
-        "react/": "https://esm.sh/react@^19.2.3/",
-        "react-dom": "https://esm.sh/react-dom@^19.2.3",
-        "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-        "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-        "recharts": "https://esm.sh/recharts@^3.6.0",
-        "react-router-dom": "https://esm.sh/react-router-dom@^7.11.0",
-        "xlsx": "https://esm.sh/xlsx@^0.18.5",
-        "jszip": "https://esm.sh/jszip@^3.10.1",
-        "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.39.0"
-      }
-    }
-    </script>
-  <link rel="stylesheet" href="/index.css">
+
+        body {
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #2563eb;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            color: #333;
+            margin-left: 2rem;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        .nav-links a:hover {
+            color: #2563eb;
+        }
+
+        .hero {
+            padding: 8rem 2rem 4rem;
+            text-align: center;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            margin-bottom: 1.5rem;
+            line-height: 1.2;
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            color: #4b5563;
+            max-width: 800px;
+            margin: 0 auto 2.5rem;
+        }
+
+        .cta-button {
+            display: inline-block;
+            background: #2563eb;
+            color: white;
+            padding: 1rem 2.5rem;
+            border-radius: 50px;
+            text-decoration: none;
+            font-size: 1.125rem;
+            font-weight: bold;
+            transition: transform 0.3s, background 0.3s;
+            box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
+        }
+
+        .cta-button:hover {
+            background: #1d4ed8;
+            transform: translateY(-2px);
+        }
+
+        .features {
+            padding: 5rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 2.25rem;
+            margin-bottom: 3rem;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .feature-card {
+            padding: 2rem;
+            border-radius: 1rem;
+            background: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            transition: transform 0.3s;
+            border: 1px solid #f3f4f6;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px rgba(0,0,0,0.1);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-title {
+            font-size: 1.25rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .how-it-works {
+            background: #f9fafb;
+            padding: 5rem 2rem;
+        }
+
+        .steps {
+            max-width: 1000px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            position: relative;
+        }
+
+        .step {
+            flex: 1;
+            text-align: center;
+            position: relative;
+            padding: 0 1rem;
+        }
+
+        .step-number {
+            width: 3rem;
+            height: 3rem;
+            background: #2563eb;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            font-weight: bold;
+            margin: 0 auto 1rem;
+        }
+
+        .footer {
+            background: #1f2937;
+            color: white;
+            padding: 3rem 2rem;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+            .nav-links {
+                display: none;
+            }
+            .steps {
+                flex-direction: column;
+                gap: 2rem;
+            }
+        }
+    </style>
 </head>
-  <body class="bg-[#f8fafc] text-slate-900 antialiased selection:bg-primary selection:text-white">
-    <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
+<body>
+    <header class="header">
+        <div class="logo">퍼펙트송장</div>
+        <nav class="nav-links">
+            <a href="#features">기능 소개</a>
+            <a href="#how-it-works">이용 방법</a>
+            <a href="#pricing">요금 안내</a>
+            <a href="/login" style="color: #2563eb;">로그인</a>
+        </nav>
+    </header>
+
+    <section class="hero">
+        <h1>복잡한 송장 업무,<br>이제 클릭 한 번으로 끝내세요</h1>
+        <p>여러 쇼핑몰의 주문을 한 곳으로 모으고, 엑셀 작업 없이 자동으로 송장을 입력합니다.<br>하루 3시간 걸리던 업무가 3분이면 충분합니다.</p>
+        <a href="/register" class="cta-button">지금 무료로 시작하기</a>
+        <p style="margin-top: 1rem; font-size: 0.875rem; color: #6b7280;">30일 무료 체험 • 신용카드 정보 불필요</p>
+    </section>
+
+    <section id="features" class="features">
+        <h2 class="section-title">왜 퍼펙트송장인가요?</h2>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h3 class="feature-title">1초 송장 자동화</h3>
+                <p>더 이상 엑셀과 씨름하지 마세요. 주문 수집부터 송장 입력까지 클릭 한 번으로 자동 처리됩니다.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔄</div>
+                <h3 class="feature-title">모든 쇼핑몰 연동</h3>
+                <p>스마트스토어, 쿠팡, 11번가 등 주요 쇼핑몰의 주문을 한 화면에서 관리할 수 있습니다.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🛡️</div>
+                <h3 class="feature-title">오입력 완벽 차단</h3>
+                <p>수기 입력으로 인한 실수를 시스템이 자동으로 방지하여 배송 사고를 예방합니다.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="how-it-works" class="how-it-works">
+        <h2 class="section-title">이렇게 간단합니다</h2>
+        <div class="steps">
+            <div class="step">
+                <div class="step-number">1</div>
+                <h3>주문 수집</h3>
+                <p>클릭 한 번으로 모든 쇼핑몰의 신규 주문을 불러옵니다.</p>
+            </div>
+            <div class="step">
+                <div class="step-number">2</div>
+                <h3>송장 출력</h3>
+                <p>버튼을 눌러 운송장을 출력하고 택배를 발송합니다.</p>
+            </div>
+            <div class="step">
+                <div class="step-number">3</div>
+                <h3>자동 입력</h3>
+                <p>발급된 송장번호가 각 쇼핑몰에 자동으로 입력됩니다.</p>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="logo" style="margin-bottom: 1rem;">퍼펙트송장</div>
+        <p>사업자등록번호: [551-87-02467] | 통신판매업신고: [2022-창원성산-0792]</p>
+        <p>고객센터: [010-4194-9222] | 이메일: [misungcorp@gmail.com]</p>
+        <p style="margin-top: 2rem; font-size: 0.875rem; color: #9ca3af;">© 2024 퍼펙트송장. All rights reserved.</p>
+    </footer>
 </body>
 </html>
