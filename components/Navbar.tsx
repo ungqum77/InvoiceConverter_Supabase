@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Package, Settings, FileText, Home, LogOut, User as UserIcon, LogIn, ShieldAlert, Menu, X, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -11,6 +11,18 @@ export const Navbar: React.FC = () => {
   const navigate = useNavigate();
   const { user, isAdmin, signOut } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // 모바일 메뉴 오픈 시 바디 스크롤 잠금
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isMobileMenuOpen]);
 
   const isActive = (path: string) => {
     return location.pathname === path 
@@ -84,7 +96,7 @@ export const Navbar: React.FC = () => {
                    <LogOut size={22} />
                  </button>
                  
-                 <button onClick={toggleMobileMenu} className="md:hidden p-2.5 text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200">
+                 <button onClick={toggleMobileMenu} className="md:hidden p-2.5 text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors z-[110]">
                    {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
                  </button>
                </div>
@@ -97,38 +109,59 @@ export const Navbar: React.FC = () => {
         </div>
       </div>
 
-      {/* Mobile Menu */}
+      {/* Mobile Menu Overlay & Container */}
       {isMobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 top-16 z-[99] bg-white animate-in slide-in-from-right duration-300">
-          <div className="flex flex-col h-full p-6 space-y-3">
-            <Link to="/" onClick={closeMobileMenu} className={`flex items-center gap-4 px-5 py-4 rounded-2xl text-lg ${isActive('/')}`}>
-              <Home size={22} /> 홈 화면
-            </Link>
-            {user && (
-              <>
-                <Link to="/products" onClick={closeMobileMenu} className={`flex items-center gap-4 px-5 py-4 rounded-2xl text-lg ${isActive('/products')}`}>
-                  <Settings size={22} /> 제품 관리
-                </Link>
-                <Link to="/convert" onClick={closeMobileMenu} className={`flex items-center gap-4 px-5 py-4 rounded-2xl text-lg ${isActive('/convert')}`}>
-                  <FileText size={22} /> 송장 변환
-                </Link>
-                {isAdmin && (
-                  <Link to="/admin" onClick={closeMobileMenu} className={`flex items-center gap-4 px-5 py-4 rounded-2xl text-lg bg-red-50 text-red-600 border border-red-100 ${isActive('/admin')}`}>
-                    <LayoutDashboard size={22} /> 관리자 모드
+        <>
+          {/* Backdrop Overlay */}
+          <div 
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[98] animate-in fade-in duration-300"
+            onClick={closeMobileMenu}
+          />
+          
+          {/* Menu Drawer */}
+          <div className="md:hidden fixed inset-y-0 right-0 w-[80%] max-w-sm z-[99] bg-white shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col">
+            <div className="flex-1 overflow-y-auto p-6 pt-20 space-y-2">
+              <Link to="/" onClick={closeMobileMenu} className={`flex items-center gap-4 px-5 py-4 rounded-2xl text-lg ${isActive('/')}`}>
+                <Home size={22} /> 홈 화면
+              </Link>
+              {user && (
+                <>
+                  <Link to="/products" onClick={closeMobileMenu} className={`flex items-center gap-4 px-5 py-4 rounded-2xl text-lg ${isActive('/products')}`}>
+                    <Settings size={22} /> 제품 관리
                   </Link>
-                )}
-              </>
-            )}
+                  <Link to="/convert" onClick={closeMobileMenu} className={`flex items-center gap-4 px-5 py-4 rounded-2xl text-lg ${isActive('/convert')}`}>
+                    <FileText size={22} /> 송장 변환
+                  </Link>
+                  {isAdmin && (
+                    <Link to="/admin" onClick={closeMobileMenu} className={`flex items-center gap-4 px-5 py-4 rounded-2xl text-lg bg-red-50 text-red-600 border border-red-100 ${isActive('/admin')}`}>
+                      <LayoutDashboard size={22} /> 관리자 모드
+                    </Link>
+                  )}
+                </>
+              )}
+            </div>
+            
             {user && (
-              <div className="mt-auto pb-10 px-4">
-                <div className="text-center text-xs text-slate-300 font-mono mb-4">{APP_VERSION}</div>
-                <button onClick={handleSignOut} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black flex items-center justify-center gap-2">
-                    <LogOut size={20} /> 로그아웃
+              <div className="mt-auto p-6 border-t border-slate-100 bg-slate-50">
+                <div className="flex items-center gap-3 mb-6 px-2">
+                  <div className="w-10 h-10 bg-primary/10 text-primary rounded-full flex items-center justify-center">
+                    <UserIcon size={20} />
+                  </div>
+                  <div className="overflow-hidden">
+                    <p className="text-sm font-black text-slate-900 truncate">{user.email}</p>
+                    <p className="text-[10px] text-slate-400 font-mono uppercase tracking-widest">{APP_VERSION}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={handleSignOut} 
+                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-black transition-colors"
+                >
+                  <LogOut size={20} /> 로그아웃
                 </button>
               </div>
             )}
           </div>
-        </div>
+        </>
       )}
     </nav>
   );
