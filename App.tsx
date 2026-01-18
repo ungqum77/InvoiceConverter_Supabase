@@ -24,9 +24,9 @@ interface ErrorBoundaryState {
 /**
  * captures errors in the react component tree.
  */
-// Fix: Import Component explicitly and extend it to ensure this.props and this.state are correctly typed.
-class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  // Fix: Explicitly defining constructor and calling super(props) to initialize React class component correctly
+// Fix: Use React.Component explicitly to ensure state and props are correctly inherited and recognized by the compiler.
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  // Fix: Explicitly define the constructor and call super(props) to initialize the component and its state.
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = {
@@ -44,7 +44,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   public render(): ReactNode {
-    // Fix: Correctly accessing state properties via this.state
+    // Fix: Correctly access 'hasError' and 'error' from this.state.
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -58,6 +58,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
               아래 버튼을 눌러 앱을 초기화해 보세요.
             </p>
             <div className="bg-slate-50 p-3 rounded-lg mb-6 text-left overflow-auto max-h-32">
+               {/* Fix: Access error properties from this.state.error. */}
                <p className="text-[10px] font-mono text-red-500">{this.state.error?.stack || this.state.error?.message}</p>
             </div>
             <div className="flex flex-col gap-2">
@@ -73,7 +74,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
       );
     }
     
-    // Fix: Accessing children correctly from this.props
+    // Fix: Access children from this.props to return properly when no error occurred.
     return this.props.children;
   }
 }
