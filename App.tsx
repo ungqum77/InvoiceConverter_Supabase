@@ -1,4 +1,4 @@
-import React, { ErrorInfo, ReactNode } from 'react';
+import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Home } from './pages/Home';
@@ -24,9 +24,9 @@ interface ErrorBoundaryState {
 /**
  * captures errors in the react component tree.
  */
-// Fix: Use React.Component explicitly to ensure that 'this.props' is correctly typed and inherited
-class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  // Fix: Explicitly defining constructor and super(props) to initialize React class component correctly
+// Fix: Import Component explicitly and extend it to ensure this.props and this.state are correctly typed.
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  // Fix: Explicitly defining constructor and calling super(props) to initialize React class component correctly
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = {
@@ -44,6 +44,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
   }
 
   public render(): ReactNode {
+    // Fix: Correctly accessing state properties via this.state
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -72,7 +73,7 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
       );
     }
     
-    // Fix: Correctly accessing children from this.props
+    // Fix: Accessing children correctly from this.props
     return this.props.children;
   }
 }
