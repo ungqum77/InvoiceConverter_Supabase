@@ -130,12 +130,25 @@ export const InvoiceConverter: React.FC = () => {
       const col1 = headers[0];
       const col2 = headers[1];
 
+      // 파일명 생성 조건: 첫 번째 열이 '플랜', 두 번째 열이 '회차'일 때만 해당 값들을 파일명에 포함
+      const isPlanMode = col1 === '플랜' && col2 === '회차';
+
       const fileGroups = new Map<string, any>();
       matchedData.forEach(order => {
         if (order.status === 'matched' && order.product?.templateId) {
-           const baseName = `${String(order.originalData[col1] || 'Unknown')}_${String(order.originalData[col2] || 'Unknown')}_${order.product.supplierName}`;
+           let baseName = '';
+           if (isPlanMode) {
+               baseName = `${String(order.originalData[col1] || 'Unknown')}_${String(order.originalData[col2] || 'Unknown')}_${order.product.supplierName}`;
+           } else {
+               // 일반적인 경우: 발주처명으로만 파일 생성 (발주처명이 같으면 하나의 파일로 묶임)
+               baseName = order.product.supplierName;
+           }
+
            const safeName = baseName.replace(/[\\/:*?"<>|]/g, '-');
+           
+           // TemplateID + FileName을 키로 사용하여 그룹화 (같은 발주처라도 템플릿이 다르면 파일 분리)
            const key = `${order.product.templateId}:::${safeName}`;
+           
            if (!fileGroups.has(key)) fileGroups.set(key, { fileName: safeName, templateId: order.product.templateId, orders: [] });
            fileGroups.get(key).orders.push(order);
         }
