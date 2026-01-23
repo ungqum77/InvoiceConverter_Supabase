@@ -56,10 +56,6 @@ export const InvoiceConverter: React.FC = () => {
   const [financialSummary, setFinancialSummary] = useState<Record<string, number>>({});
   const [saveToCrm, setSaveToCrm] = useState(true);
 
-  // Debug Tool State
-  const [debugSku, setDebugSku] = useState('');
-  const [debugResult, setDebugResult] = useState<any>(null);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { 
@@ -191,11 +187,14 @@ export const InvoiceConverter: React.FC = () => {
                const shipCost = (product.shippingCost || 0) * qty;
                const fee = Math.round(salesAmt * ((product.marketFeeRate || 0) / 100));
                const profit = salesAmt - purchAmt - shipCost - (product.otherCost || 0) * qty - fee;
+               
+               // Resolve product name (Use Alt Name or Option Name if applicable)
+               const { name: resolvedName } = getResolvedProductName(order);
 
                salesRecordsToSave.push({
                    user_id: user!.id,
                    product_id: product.id,
-                   product_name: product.name,
+                   product_name: resolvedName, // Save the actual name used on invoice
                    product_sku: product.sku,
                    supplier_name: product.supplierName,
                    quantity: qty,
