@@ -76,6 +76,7 @@ export interface Tier {
   name: string;
   max_products: number;
   max_templates: number;
+  max_crm_count?: number; // New: CRM Storage Limit
 }
 
 export interface UserProfile {
@@ -95,4 +96,16 @@ export interface ActivityLog {
   description: string;
   created_at: string;
   user_email?: string; 
+}
+
+export interface AppSettings {
+    silver_subscription_url: string;
+    gold_subscription_url: string;
+    youtube_tutorial_template: string;
+    youtube_tutorial_product: string;
+    youtube_tutorial_convert: string;
+    price_silver_original: string;
+    price_silver_sale: string;
+    price_gold_original: string;
+    price_gold_sale: string;
 }

@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings } from '../services/dbService';
-import { UserProfile, ActivityLog } from '../types';
+import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings, fetchAllTiers, updateTier } from '../services/dbService';
+import { UserProfile, ActivityLog, Tier } from '../types';
 import { Button } from '../components/Button';
-import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge } from 'lucide-react';
+import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, IS_CONFIG_ERROR } from '../services/supabase';
@@ -47,6 +47,7 @@ export const AdminDashboard: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'users' | 'logs' | 'settings'>('users');
     const [profiles, setProfiles] = useState<UserProfile[]>([]);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
+    const [tiers, setTiers] = useState<Tier[]>([]);
     const [settings, setSettings] = useState<AppSettings>({
         silver_subscription_url: '',
         gold_subscription_url: '',
@@ -58,38 +59,59 @@ export const AdminDashboard: React.FC = () => {
         price_gold_original: '',
         price_gold_sale: ''
     });
+    // Temporary state for editing tier limits
+    const [tierLimits, setTierLimits] = useState({ free: 20, silver: 300 });
+
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [showSolution, setShowSolution] = useState(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'created_at', direction: 'desc' });
 
-    // DB의 tiers 테이블 수치를 최신 정책에 맞게 강제 업데이트하는 쿼리 추가
-    const SQL_SOLUTION = `-- [SQL V19] 주문번호 추가 및 등급 정책 패치
--- 1. Sales Records에 주문번호(order_id) 컬럼 추가
-ALTER TABLE public.sales_records ADD COLUMN IF NOT EXISTS order_id TEXT;
+    const SQL_SOLUTION = `-- [SQL V22] 통합 DB 업데이트 스크립트 (CRM & Tiers)
+
+-- 1. Sales Records 테이블 생성 (없을 경우)
+CREATE TABLE IF NOT EXISTS public.sales_records (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+    product_id UUID, 
+    product_name TEXT,
+    product_sku TEXT,
+    supplier_name TEXT,
+    order_id TEXT, -- 중복 방지용 주문번호
+    quantity INTEGER DEFAULT 1,
+    unit_sales_price NUMERIC DEFAULT 0,
+    unit_purchase_cost NUMERIC DEFAULT 0,
+    total_sales_amount NUMERIC DEFAULT 0,
+    total_purchase_amount NUMERIC DEFAULT 0,
+    total_shipping_cost NUMERIC DEFAULT 0,
+    total_market_fee NUMERIC DEFAULT 0,
+    net_profit NUMERIC DEFAULT 0,
+    order_date TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- 인덱스 생성
+CREATE INDEX IF NOT EXISTS idx_sales_records_user_id ON public.sales_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_sales_records_order_date ON public.sales_records(order_date);
 CREATE INDEX IF NOT EXISTS idx_sales_records_order_id ON public.sales_records(order_id);
 
--- 2. 등급별 제한 수치 동기화
-UPDATE public.tiers SET max_products = 2, max_templates = 1 WHERE id = 'free';
-UPDATE public.tiers SET max_products = 8, max_templates = 3 WHERE id = 'silver';
-UPDATE public.tiers SET max_products = 100, max_templates = 50 WHERE id = 'gold';
+-- 2. Tiers 테이블에 max_crm_count 컬럼 추가
+ALTER TABLE public.tiers ADD COLUMN IF NOT EXISTS max_crm_count INTEGER DEFAULT 20;
 
--- 3. 시스템 설정 테이블 보안 정책
-CREATE TABLE IF NOT EXISTS public.app_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
-);
-ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "settings_read_policy" ON public.app_settings;
-DROP POLICY IF EXISTS "settings_admin_full_policy" ON public.app_settings;
-CREATE POLICY "settings_read_policy" ON public.app_settings FOR SELECT TO authenticated USING (true);
-CREATE POLICY "settings_admin_full_policy" ON public.app_settings FOR ALL TO authenticated 
-USING ( (SELECT role FROM public.profiles WHERE id = auth.uid()) IN ('admin', 'super_admin') );
+-- 3. 등급별 저장 한도 설정
+UPDATE public.tiers SET max_products = 2, max_templates = 1, max_crm_count = 20 WHERE id = 'free';
+UPDATE public.tiers SET max_products = 8, max_templates = 3, max_crm_count = 300 WHERE id = 'silver';
+UPDATE public.tiers SET max_products = 100, max_templates = 50, max_crm_count = 999999 WHERE id = 'gold';
 
--- 4. 최고 관리자 권한 부여
-UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.com';
+-- 4. RLS 정책 (보안)
+ALTER TABLE public.sales_records ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can view own sales records" ON public.sales_records;
+CREATE POLICY "Users can view own sales records" ON public.sales_records FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own sales records" ON public.sales_records;
+CREATE POLICY "Users can insert own sales records" ON public.sales_records FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own sales records" ON public.sales_records;
+CREATE POLICY "Users can delete own sales records" ON public.sales_records FOR DELETE USING (auth.uid() = user_id);
 `;
 
     useEffect(() => {
@@ -110,9 +132,22 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
                 const data = await fetchAllActivityLogs();
                 setLogs(data);
             }
-            // Always fetch settings
-            const settingsData = await fetchAppSettings();
+            // Always fetch settings & tiers
+            const [settingsData, tiersData] = await Promise.all([
+                fetchAppSettings(),
+                fetchAllTiers()
+            ]);
             setSettings(settingsData);
+            setTiers(tiersData);
+            
+            // Set initial tier limits from DB
+            const freeTier = tiersData.find(t => t.id === 'free');
+            const silverTier = tiersData.find(t => t.id === 'silver');
+            setTierLimits({
+                free: freeTier?.max_crm_count || 20,
+                silver: silverTier?.max_crm_count || 300
+            });
+            
         } catch (e: any) {
             console.error("Load Error:", e);
             setErrorMsg(e.message || "데이터 로드 중 오류가 발생했습니다.");
@@ -142,8 +177,14 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
         e.preventDefault();
         try {
             setLoading(true);
+            // 1. Update App Settings
             await updateAppSettings(settings);
-            if (currentUser) await logActivity(currentUser.id, 'UPDATE_SETTINGS', '관리자 설정(가격/URL) 업데이트');
+            
+            // 2. Update Tiers Limits
+            await updateTier('free', { max_crm_count: tierLimits.free });
+            await updateTier('silver', { max_crm_count: tierLimits.silver });
+            
+            if (currentUser) await logActivity(currentUser.id, 'UPDATE_SETTINGS', '관리자 설정(가격/URL/한도) 업데이트');
             alert('설정이 저장되었습니다.');
         } catch (e: any) {
             alert('저장 실패: ' + e.message);
@@ -220,12 +261,12 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
             {/* SQL 패치 가이드 */}
             <div className="mb-6 bg-slate-900 rounded-xl p-6 border border-slate-700 shadow-2xl animate-fade-in">
                 <div className="flex justify-between items-center mb-4 text-green-400 font-bold text-sm font-mono">
-                    <div className="flex items-center gap-2"><Terminal size={16} /> SQL Sync Script (DB 수치 동기화)</div>
+                    <div className="flex items-center gap-2"><Terminal size={16} /> SQL Sync Script (DB 업데이트)</div>
                     <button onClick={() => { navigator.clipboard.writeText(SQL_SOLUTION); alert("복사되었습니다. Supabase SQL Editor에 붙여넣어 실행하세요."); }} className="text-xs bg-green-700 text-white px-3 py-1.5 rounded hover:bg-green-600 transition-colors flex items-center gap-1">
                         <Copy size={12} /> 코드 복사
                     </button>
                 </div>
-                <p className="text-[11px] text-slate-400 mb-2 italic">* DB 스키마가 변경되었습니다. 아래 스크립트를 실행하여 'order_id' 컬럼을 추가하세요.</p>
+                <p className="text-[11px] text-slate-400 mb-2 italic">* 'max_crm_count' 컬럼 추가 및 'sales_records' 테이블 생성을 위한 SQL입니다.</p>
                 <pre className="text-[11px] font-mono text-slate-300 bg-black/40 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-800">{SQL_SOLUTION}</pre>
             </div>
 
@@ -303,6 +344,19 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
                                         </div>
                                     </div>
                                     <p className="text-[10px] text-slate-400">* 판매가가 정상가보다 낮을 경우, 메인 화면에 자동으로 '할인 배지'가 표시됩니다.</p>
+                                </div>
+
+                                <h4 className="font-bold text-slate-700 flex items-center gap-2 pt-2"><Database size={16}/> CRM 데이터 저장 한도 (Tiers)</h4>
+                                <div className="space-y-3 p-5 bg-slate-50 rounded-xl border border-slate-200">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">무료(Free) 등급 한도 (개)</label>
+                                        <input type="number" className="w-full border rounded p-2 text-sm" placeholder="기본값: 20" value={tierLimits.free} onChange={e => setTierLimits({...tierLimits, free: Number(e.target.value)})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">실버(Silver) 등급 한도 (개)</label>
+                                        <input type="number" className="w-full border rounded p-2 text-sm" placeholder="기본값: 300" value={tierLimits.silver} onChange={e => setTierLimits({...tierLimits, silver: Number(e.target.value)})} />
+                                    </div>
+                                    <p className="text-[10px] text-slate-400">* 골드 등급은 무제한입니다. (이 값은 TIERS 테이블의 max_crm_count에 저장됩니다)</p>
                                 </div>
 
                                 <h4 className="font-bold text-slate-700 flex items-center gap-2 pt-2"><LinkIcon size={16}/> 결제 및 구독 URL</h4>

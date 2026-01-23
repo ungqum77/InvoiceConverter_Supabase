@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube, DollarSign, Calendar, FolderInput, HardDrive, FolderTree, ChevronRight } from 'lucide-react';
 import { Button } from '../components/Button';
-import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords } from '../services/dbService';
+import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords, deleteOldestSalesRecords, SalesSaveResult } from '../services/dbService';
 import { InvoiceRow, MatchedOrder, Product, ColumnMapping, SalesRecord } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
@@ -49,7 +49,9 @@ export const InvoiceConverter: React.FC = () => {
   const [matchedData, setMatchedData] = useState<MatchedOrder[]>([]);
   const [dbProducts, setDbProducts] = useState<Product[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>({
-    silver_subscription_url: '', gold_subscription_url: '', youtube_tutorial_template: '', youtube_tutorial_product: '', youtube_tutorial_convert: ''
+    silver_subscription_url: '', gold_subscription_url: '', youtube_tutorial_template: '', youtube_tutorial_product: '', youtube_tutorial_convert: '',
+    price_silver_original: '', price_silver_sale: '', price_gold_original: '', price_gold_sale: '',
+    limit_crm_free: '', limit_crm_silver: ''
   });
   
   // Financial Summary
@@ -232,13 +234,34 @@ export const InvoiceConverter: React.FC = () => {
 
   const saveCrmDataOnly = async (records: any[]) => {
       if (saveToCrm && records.length > 0) {
-          const result = await saveSalesRecords(records);
-          if (result && result.skippedCount > 0) {
-              const preview = result.skippedItems.slice(0, 3).map((i: any) => `${i.product_name} (주문: ${i.order_id})`).join(', ');
-              console.log(`CRM: ${result.savedCount}건 저장, ${result.skippedCount}건 중복 제외. (${preview} 등)`);
-              alert(`CRM 저장 완료: ${result.savedCount}건 저장.\n(중복된 주문 ${result.skippedCount}건은 제외되었습니다)\n제외 예시: ${preview}`);
-          } else {
-              console.log("CRM Data Saved");
+          try {
+              const result = await saveSalesRecords(records);
+              
+              if (!result.success && result.error === 'LIMIT_REACHED' && result.countToDelete) {
+                  // Limit reached handling
+                  if (window.confirm(`CRM 데이터 저장 한도를 초과했습니다.\n(초과량: ${result.countToDelete}개)\n\n가장 오래된 데이터를 ${result.countToDelete}개 삭제하고 저장하시겠습니까?\n\n* '취소'를 누르면 데이터가 저장되지 않습니다.`)) {
+                      await deleteOldestSalesRecords(result.countToDelete);
+                      // Retry save
+                      const retryResult = await saveSalesRecords(records);
+                      if (retryResult.success) {
+                          alert(`오래된 데이터 삭제 후 ${retryResult.savedCount}건이 성공적으로 저장되었습니다.`);
+                      }
+                  } else {
+                      alert("CRM 데이터 저장이 취소되었습니다. (한도 초과)");
+                  }
+                  return;
+              }
+
+              if (result.success && result.skippedCount > 0) {
+                  const preview = result.skippedItems.slice(0, 3).map((i: any) => `${i.product_name} (주문: ${i.order_id})`).join(', ');
+                  console.log(`CRM: ${result.savedCount}건 저장, ${result.skippedCount}건 중복 제외. (${preview} 등)`);
+                  alert(`CRM 저장 완료: ${result.savedCount}건 저장.\n(중복된 주문 ${result.skippedCount}건은 제외되었습니다)\n제외 예시: ${preview}`);
+              } else if (result.success) {
+                  console.log("CRM Data Saved");
+              }
+          } catch (e: any) {
+              console.error("CRM Save Error:", e);
+              alert("CRM 저장 중 오류가 발생했습니다: " + e.message);
           }
       }
   };
@@ -339,102 +362,18 @@ export const InvoiceConverter: React.FC = () => {
           const monthDir = await yearDir.getDirectoryHandle(month, { create: true });
           const targetDir = await monthDir.getDirectoryHandle(dateDirName, { create: true });
 
-          // Helper: Append with duplication check
+          // Accumulator for incremental costs
+          const incrementalCosts: Record<string, number> = {};
+
+          // Helper: Append with duplication check and return cost of added rows
           // Checks Order ID + Orderer + Receiver + Product Name
-          const appendExcelWithDedup = async (dirHandle: any, baseName: string, tpl: any, newRows: any[][], headers: string[]) => {
+          const appendExcelWithDedup = async (dirHandle: any, baseName: string, tpl: any, orders: MatchedOrder[], headers: string[], supplierName: string): Promise<number> => {
              const fileName = `${baseName}.xlsx`;
-             let finalData = [headers, ...newRows]; // Default: Create New
+             let addedCost = 0;
+             let finalData: any[][] = [];
 
-             try {
-                 // Try to read existing file
-                 const fileHandle = await dirHandle.getFileHandle(fileName);
-                 const file = await fileHandle.getFile();
-                 const arrayBuffer = await file.arrayBuffer();
-                 const wb = XLSX.read(arrayBuffer, { type: 'array' });
-                 const ws = wb.Sheets[wb.SheetNames[0]];
-                 const existingData = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][]; // Array of Arrays
-
-                 if (existingData.length > 0) {
-                     const existingHeaders = existingData[0] as string[];
-                     // Identify key column indices in Existing File
-                     // Mapping Input Headers -> Template Output Headers logic is tricky here because
-                     // we need to find which column in the OUTPUT matches the INPUT mapping key.
-                     // Simpler approach: Look for header names that matches the mapping keys OR standard columns.
-                     
-                     // Helper to find index by potential header names
-                     const findIdx = (candidates: string[]) => existingHeaders.findIndex(h => candidates.includes(String(h).trim()));
-                     
-                     const orderIdIdx = mapping.orderId ? findIdx([mapping.orderId]) : -1;
-                     const ordererIdx = findIdx([mapping.orderer, '주문자', '보내는사람']);
-                     const receiverIdx = findIdx([mapping.receiver, '수취인', '받는사람']);
-                     
-                     // For Product Name, we look for mapping.productName OR common product headers
-                     const productCandidates = mapping.productName ? [mapping.productName, ...PRODUCT_NAME_HEADERS] : PRODUCT_NAME_HEADERS;
-                     const productIdx = findIdx(productCandidates);
-
-                     // Only perform deduplication if we can identify at least Order ID column
-                     if (orderIdIdx !== -1) {
-                         const existingKeys = new Set<string>();
-                         // Start from row 1 (skip header)
-                         for(let i=1; i<existingData.length; i++) {
-                             const r = existingData[i];
-                             const oid = String(r[orderIdIdx] || '').trim();
-                             const ord = ordererIdx !== -1 ? String(r[ordererIdx] || '').trim() : '';
-                             const rcv = receiverIdx !== -1 ? String(r[receiverIdx] || '').trim() : '';
-                             const prd = productIdx !== -1 ? String(r[productIdx] || '').trim() : '';
-                             
-                             // Key: OrderID + Orderer + Receiver + Product
-                             existingKeys.add(`${oid}_${ord}_${rcv}_${prd}`);
-                         }
-
-                         // Filter new rows
-                         const uniqueNewRows = newRows.filter(r => {
-                             const oid = String(r[orderIdIdx] || '').trim();
-                             const ord = ordererIdx !== -1 ? String(r[ordererIdx] || '').trim() : '';
-                             const rcv = receiverIdx !== -1 ? String(r[receiverIdx] || '').trim() : '';
-                             const prd = productIdx !== -1 ? String(r[productIdx] || '').trim() : '';
-                             
-                             const key = `${oid}_${ord}_${rcv}_${prd}`;
-                             return !existingKeys.has(key);
-                         });
-                         
-                         if (uniqueNewRows.length < newRows.length) {
-                             console.log(`Skipped ${newRows.length - uniqueNewRows.length} duplicates for ${fileName}`);
-                         }
-                         
-                         // Append only unique rows to existing data
-                         finalData = [...existingData, ...uniqueNewRows];
-                     } else {
-                         // Can't identify Order ID column, just append everything (fallback)
-                         finalData = [...existingData, ...newRows];
-                     }
-                 }
-             } catch (e) {
-                 // File doesn't exist, create new (finalData is already set)
-             }
-
-             // Write
-             const wb = XLSX.utils.book_new();
-             const ws = XLSX.utils.aoa_to_sheet(finalData);
-             XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-             const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-
-             const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
-             const writable = await fileHandle.createWritable();
-             await writable.write(buffer);
-             await writable.close();
-          };
-
-          // 3. Write Excel Files (Invoice Files)
-          for (const [key, group] of fileGroups) {
-              const tpl = templateMap.get(group.templateId);
-              if (!tpl) continue;
-              
-              const supplierDir = await targetDir.getDirectoryHandle(group.supplier, { create: true });
-
-              // Prepare New Rows
-              const finalHeaders = (tpl.outputHeaders && tpl.outputHeaders.length > 0) ? tpl.outputHeaders : tpl.headers;
-              const dataRows = group.orders.map((o: any) => {
+             // Generate candidate rows first
+             const candidateRows = orders.map((o: any) => {
                 const rowData: any[] = [];
                 const { name: pName } = getResolvedProductName(o);
                 const ord = String(o.originalData[mapping.orderer] || '').trim();
@@ -450,17 +389,113 @@ export const InvoiceConverter: React.FC = () => {
                    else rowData.push(o.originalData[h] || '');
                 });
                 return rowData;
-              });
+             });
+
+             try {
+                 // Try to read existing file
+                 const fileHandle = await dirHandle.getFileHandle(fileName);
+                 const file = await fileHandle.getFile();
+                 const arrayBuffer = await file.arrayBuffer();
+                 const wb = XLSX.read(arrayBuffer, { type: 'array' });
+                 const ws = wb.Sheets[wb.SheetNames[0]];
+                 const existingData = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][]; // Array of Arrays
+
+                 if (existingData.length > 0) {
+                     const existingHeaders = existingData[0] as string[];
+                     // Identify key column indices in Existing File
+                     const findIdx = (candidates: string[]) => existingHeaders.findIndex(h => candidates.includes(String(h).trim()));
+                     
+                     const orderIdIdx = mapping.orderId ? findIdx([mapping.orderId]) : -1;
+                     const ordererIdx = findIdx([mapping.orderer, '주문자', '보내는사람']);
+                     const receiverIdx = findIdx([mapping.receiver, '수취인', '받는사람']);
+                     const productCandidates = mapping.productName ? [mapping.productName, ...PRODUCT_NAME_HEADERS] : PRODUCT_NAME_HEADERS;
+                     const productIdx = findIdx(productCandidates);
+
+                     // Only perform deduplication if we can identify at least Order ID column
+                     if (orderIdIdx !== -1) {
+                         const existingKeys = new Set<string>();
+                         // Start from row 1 (skip header)
+                         for(let i=1; i<existingData.length; i++) {
+                             const r = existingData[i];
+                             const oid = String(r[orderIdIdx] || '').trim();
+                             const ord = ordererIdx !== -1 ? String(r[ordererIdx] || '').trim() : '';
+                             const rcv = receiverIdx !== -1 ? String(r[receiverIdx] || '').trim() : '';
+                             const prd = productIdx !== -1 ? String(r[productIdx] || '').trim() : '';
+                             existingKeys.add(`${oid}_${ord}_${rcv}_${prd}`);
+                         }
+
+                         // Filter new rows and calculate cost
+                         const uniqueNewRows: any[][] = [];
+                         candidateRows.forEach((r, idx) => {
+                             const oid = String(r[orderIdIdx] || '').trim();
+                             const ord = ordererIdx !== -1 ? String(r[ordererIdx] || '').trim() : '';
+                             const rcv = receiverIdx !== -1 ? String(r[receiverIdx] || '').trim() : '';
+                             const prd = productIdx !== -1 ? String(r[productIdx] || '').trim() : '';
+                             const key = `${oid}_${ord}_${rcv}_${prd}`;
+                             
+                             if (!existingKeys.has(key)) {
+                                 uniqueNewRows.push(r);
+                                 // Add Cost
+                                 const matchedOrder = orders[idx];
+                                 if (matchedOrder.product) {
+                                     addedCost += (matchedOrder.product.purchaseCost || 0) * matchedOrder.quantity;
+                                 }
+                             }
+                         });
+                         
+                         if (uniqueNewRows.length < candidateRows.length) {
+                             console.log(`Skipped ${candidateRows.length - uniqueNewRows.length} duplicates for ${fileName}`);
+                         }
+                         finalData = [...existingData, ...uniqueNewRows];
+                     } else {
+                         // Fallback: append all
+                         finalData = [...existingData, ...candidateRows];
+                         // All considered new cost
+                         orders.forEach(o => {
+                             if(o.product) addedCost += (o.product.purchaseCost || 0) * o.quantity;
+                         });
+                     }
+                 }
+             } catch (e) {
+                 // File doesn't exist, create new
+                 finalData = [headers, ...candidateRows];
+                 orders.forEach(o => {
+                    if(o.product) addedCost += (o.product.purchaseCost || 0) * o.quantity;
+                 });
+             }
+
+             // Write
+             const wb = XLSX.utils.book_new();
+             const ws = XLSX.utils.aoa_to_sheet(finalData);
+             XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+             const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+
+             const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+             const writable = await fileHandle.createWritable();
+             await writable.write(buffer);
+             await writable.close();
+             
+             return addedCost;
+          };
+
+          // 3. Write Excel Files (Invoice Files)
+          for (const [key, group] of fileGroups) {
+              const tpl = templateMap.get(group.templateId);
+              if (!tpl) continue;
               
-              // Use Append/Dedup Logic
-              await appendExcelWithDedup(supplierDir, group.fileName, tpl, dataRows, finalHeaders);
+              const supplierDir = await targetDir.getDirectoryHandle(group.supplier, { create: true });
+              const finalHeaders = (tpl.outputHeaders && tpl.outputHeaders.length > 0) ? tpl.outputHeaders : tpl.headers;
+              
+              // Use Append/Dedup Logic and get incremental cost
+              const costAdded = await appendExcelWithDedup(supplierDir, group.fileName, tpl, group.orders, finalHeaders, group.supplier);
+              
+              // Accumulate incremental cost for summary
+              incrementalCosts[group.supplier] = (incrementalCosts[group.supplier] || 0) + costAdded;
           }
 
-          // 4. Write or Append Summary (Existing logic maintained)
+          // 4. Update Summary File with Incremental Logic
           const summaryFileName = `00_정산요약_${date}.xlsx`;
-          const newSummaryRows = Object.entries(financialSummary).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
-          
-          let finalSummaryData = newSummaryRows;
+          let finalSummaryData: any[] = [];
           
           try {
               const existingHandle = await targetDir.getFileHandle(summaryFileName);
@@ -469,8 +504,30 @@ export const InvoiceConverter: React.FC = () => {
               const wb = XLSX.read(arrayBuffer, { type: 'array' });
               const ws = wb.Sheets[wb.SheetNames[0]];
               const existingData = XLSX.utils.sheet_to_json(ws);
-              finalSummaryData = [...existingData, ...newSummaryRows] as any[];
-          } catch (e) { /* Create new */ }
+              
+              // Merge incremental costs into existing data
+              const summaryMap = new Map<string, number>();
+              existingData.forEach((row: any) => {
+                  const sup = String(row["발주처"] || '');
+                  const amt = Number(row["일일 정산금 (지급액)"] || 0);
+                  if (sup) summaryMap.set(sup, amt);
+              });
+              
+              // Add incremental costs
+              Object.entries(incrementalCosts).forEach(([sup, amt]) => {
+                  const current = summaryMap.get(sup) || 0;
+                  summaryMap.set(sup, current + amt);
+              });
+              
+              // If there are suppliers in current batch not in existing file (unlikely if loop matches, but possible)
+              // The loop above covers it because we iterate incrementalCosts
+              
+              finalSummaryData = Array.from(summaryMap.entries()).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
+              
+          } catch (e) {
+              // File doesn't exist, use full incremental costs (which equals total for this batch if new)
+              finalSummaryData = Object.entries(incrementalCosts).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
+          }
 
           const summaryWs = XLSX.utils.json_to_sheet(finalSummaryData);
           const summaryWb = XLSX.utils.book_new();

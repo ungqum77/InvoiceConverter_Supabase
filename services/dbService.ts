@@ -1,6 +1,8 @@
 
 import { supabase } from './supabase';
-import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord } from '../types';
+import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings } from '../types';
+
+export type { AppSettings };
 
 // Helper to handle Supabase "snake_case" to "camelCase" mapping
 const mapProductFromDB = (data: any): Product => ({
@@ -30,10 +32,10 @@ const mapTemplateFromDB = (data: any): InvoiceTemplate => ({
 
 // Tier Definitions
 export const DEFAULT_TIERS: Record<string, Tier> = {
-  free: { id: 'free', name: '무료 회원', max_products: 2, max_templates: 1 },
-  silver: { id: 'silver', name: '실버 회원', max_products: 8, max_templates: 3 },
-  gold: { id: 'gold', name: '골드 회원', max_products: 100, max_templates: 50 },
-  admin: { id: 'admin', name: '관리자', max_products: 9999, max_templates: 9999 },
+  free: { id: 'free', name: '무료 회원', max_products: 2, max_templates: 1, max_crm_count: 20 },
+  silver: { id: 'silver', name: '실버 회원', max_products: 8, max_templates: 3, max_crm_count: 300 },
+  gold: { id: 'gold', name: '골드 회원', max_products: 100, max_templates: 50, max_crm_count: 999999 },
+  admin: { id: 'admin', name: '관리자', max_products: 9999, max_templates: 9999, max_crm_count: 999999 },
 };
 
 export const fetchAllTiers = async (): Promise<Tier[]> => {
@@ -41,7 +43,12 @@ export const fetchAllTiers = async (): Promise<Tier[]> => {
         try {
             const { data, error } = await supabase.from('tiers').select('*').order('max_products', { ascending: true });
             if (error) return Object.values(DEFAULT_TIERS);
-            return data || Object.values(DEFAULT_TIERS);
+            
+            // Merge with DB data but ensure defaults if columns missing
+            return (data || []).map((t: any) => ({
+                ...DEFAULT_TIERS[t.id],
+                ...t
+            }));
         } catch (e) {
             return Object.values(DEFAULT_TIERS);
         }
@@ -49,18 +56,12 @@ export const fetchAllTiers = async (): Promise<Tier[]> => {
     return Object.values(DEFAULT_TIERS);
 };
 
-// ... (AppSettings functions remain same, omitted for brevity but assumed present) ...
-export interface AppSettings {
-    silver_subscription_url: string;
-    gold_subscription_url: string;
-    youtube_tutorial_template: string;
-    youtube_tutorial_product: string;
-    youtube_tutorial_convert: string;
-    price_silver_original: string;
-    price_silver_sale: string;
-    price_gold_original: string;
-    price_gold_sale: string;
-}
+export const updateTier = async (id: string, updates: Partial<Tier>) => {
+    if (supabase) {
+        const { error } = await supabase.from('tiers').update(updates).eq('id', id);
+        if (error) throw new Error(`등급 업데이트 실패: ${error.message}`);
+    }
+};
 
 export const SETTING_KEYS: (keyof AppSettings)[] = [
     'silver_subscription_url', 'gold_subscription_url', 'youtube_tutorial_template', 
@@ -124,7 +125,11 @@ export const getUserProfile = async (userId: string): Promise<UserProfile | null
     try {
         const { data, error } = await supabase.from('profiles').select('*, tier:tiers(*)').eq('id', userId).single();
         if (error) throw error;
-        const effectiveTier = data.tier || DEFAULT_TIERS[data.tier_id] || DEFAULT_TIERS['free'];
+        // Merge DB tier data with defaults to ensure all fields exist
+        const dbTier = data.tier;
+        const defaultTier = DEFAULT_TIERS[data.tier_id] || DEFAULT_TIERS['free'];
+        const effectiveTier = dbTier ? { ...defaultTier, ...dbTier } : defaultTier;
+        
         return { ...data, tier: effectiveTier };
     } catch (e) { return { id: userId, email: '', tier_id: 'free', role: 'user', tier: DEFAULT_TIERS['free'] }; }
   }
@@ -252,19 +257,80 @@ export const deleteProduct = async (id: string): Promise<void> => {
 };
 
 // --- Sales & CRM ---
-export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'created_at'>[]) => {
+export interface SalesSaveResult {
+    success: boolean;
+    savedCount: number;
+    skippedCount: number;
+    skippedItems: any[];
+    error?: 'LIMIT_REACHED' | string;
+    countToDelete?: number;
+}
+
+export const deleteOldestSalesRecords = async (count: number) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
-    
-    // Extract Order IDs to check for duplicates
-    // We only check duplicates if Order ID is present.
-    const inputOrderIds = records.map(r => r.order_id).filter(Boolean) as string[];
 
+    // Find oldest IDs
+    const { data, error } = await supabase
+        .from('sales_records')
+        .select('id')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: true })
+        .limit(count);
+    
+    if (error) throw error;
+    if (!data || data.length === 0) return;
+
+    const idsToDelete = data.map(d => d.id);
+    const { error: delError } = await supabase
+        .from('sales_records')
+        .delete()
+        .in('id', idsToDelete);
+    
+    if (delError) throw delError;
+    await logActivity(user.id, 'ROTATE_SALES', `저장 공간 확보를 위해 오래된 데이터 ${idsToDelete.length}건 자동 삭제`);
+};
+
+export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'created_at'>[]): Promise<SalesSaveResult> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('인증이 만료되었습니다.');
+
+    // 1. Check Limits based on User's Tier
+    const profile = await getUserProfile(user.id);
+    
+    // Default fallback limits if not set in DB
+    const tierLimit = profile?.tier?.max_crm_count ?? DEFAULT_TIERS[profile?.tier_id || 'free'].max_crm_count ?? 20;
+    
+    // For Gold/Admin, treat as unlimited if high number
+    const effectiveLimit = tierLimit > 100000 ? 999999 : tierLimit;
+
+    const { count: currentCount, error: countError } = await supabase
+        .from('sales_records')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+    
+    if (countError) throw countError;
+    
+    const incomingCount = records.length;
+    const projectedCount = (currentCount || 0) + incomingCount;
+
+    if (projectedCount > effectiveLimit) {
+        return {
+            success: false,
+            savedCount: 0,
+            skippedCount: 0,
+            skippedItems: [],
+            error: 'LIMIT_REACHED',
+            countToDelete: projectedCount - effectiveLimit
+        };
+    }
+
+    // 2. Extract Order IDs to check for duplicates
+    const inputOrderIds = records.map(r => r.order_id).filter(Boolean) as string[];
     let newRecords = records;
     const skipped: any[] = [];
 
     if (inputOrderIds.length > 0) {
-        // Fetch existing records that match the order IDs
         const { data: existingData, error: fetchError } = await supabase
             .from('sales_records')
             .select('order_id, supplier_name, product_name')
@@ -298,7 +364,7 @@ export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'create
         await logActivity(user.id, 'SAVE_SALES', `${newRecords.length}건의 매출 기록 저장 (중복 ${skipped.length}건 제외)`);
     }
 
-    return { savedCount: newRecords.length, skippedCount: skipped.length, skippedItems: skipped };
+    return { success: true, savedCount: newRecords.length, skippedCount: skipped.length, skippedItems: skipped };
 };
 
 export const fetchSalesRecords = async (startDate: string, endDate: string): Promise<SalesRecord[]> => {

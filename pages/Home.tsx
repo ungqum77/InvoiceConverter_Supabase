@@ -1,6 +1,7 @@
+
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, Zap, Award, Package, ShieldCheck, Sparkles, ExternalLink } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Zap, Award, Package, ShieldCheck, Sparkles, ExternalLink, TrendingUp } from 'lucide-react';
 import { fetchAppSettings, AppSettings, fetchAllTiers } from '../services/dbService';
 import { Tier } from '../types';
 
@@ -21,7 +22,7 @@ export const Home: React.FC = () => {
     loadHomeData();
   }, []);
 
-  const getTier = (id: string) => tiers.find(t => t.id === id) || { max_products: 0, max_templates: 0 };
+  const getTier = (id: string) => tiers.find(t => t.id === id) || { max_products: 0, max_templates: 0, max_crm_count: 0 };
   const silverTier = getTier('silver');
   const goldTier = getTier('gold');
   const freeTier = getTier('free');
@@ -60,7 +61,7 @@ export const Home: React.FC = () => {
                 엑셀 주문서를<br/>
                 <span className="text-primary italic">3초 만에 송장으로.</span>
               </h1>
-              <p className="text-[17px] leading-relaxed text-slate-500 font-bold max-w-2xl mx-auto mb-12">
+              <p className="text-slate-500 font-bold max-w-2xl mx-auto mb-12 text-lg">
                 복잡한 주문 리스트를 제품 ID 기반으로 자동 분류하고,<br className="hidden sm:block"/> 각 택배사 양식에 맞춰 엑셀 파일을 즉시 생성해 드립니다.
               </p>
               
@@ -99,7 +100,7 @@ export const Home: React.FC = () => {
               </div>
             </div>
 
-            {/* 멤버십 등급 섹션 - 통통 튀는 애니메이션 복구 */}
+            {/* 멤버십 등급 섹션 */}
             <div className="mt-40 text-center">
                 <div className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary/10 text-primary rounded-full text-[13px] font-black mb-6 border border-primary/20 animate-pulse shadow-lg shadow-primary/5">
                   <Sparkles size={16}/> 하루 290원으로 발주서 스트레스 없이
@@ -123,12 +124,13 @@ export const Home: React.FC = () => {
                         <ul className="space-y-5 mb-12 flex-1 border-t border-slate-50 pt-8">
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><CheckCircle2 size={20} className="text-primary shrink-0"/> 최대 제품 등록: {freeTier.max_products}개</li>
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><CheckCircle2 size={20} className="text-primary shrink-0"/> 송장 양식 등록: {freeTier.max_templates}개</li>
+                            <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><TrendingUp size={20} className="text-primary shrink-0"/> CRM 주문 저장: {(freeTier.max_crm_count ?? 20) >= 99999 ? '무제한' : `${(freeTier.max_crm_count ?? 20).toLocaleString()}건`}</li>
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><CheckCircle2 size={20} className="text-primary shrink-0"/> 기본 송장 변환 기능</li>
                         </ul>
                         <button className="w-full py-5 bg-slate-50 text-slate-400 rounded-2xl text-sm font-black border border-slate-100 cursor-default">현재 플랜</button>
                     </div>
 
-                    {/* SILVER - 강조 디자인 및 누락된 텍스트 복구 */}
+                    {/* SILVER */}
                     <div className="bg-white rounded-[40px] p-10 border-[4px] border-primary shadow-2xl shadow-primary/20 flex flex-col relative sm:scale-105 z-10 text-left overflow-hidden">
                         <div className="absolute top-0 left-1/2 -translate-x-1/2 bg-primary text-white text-[11px] font-[1000] px-6 py-2 rounded-b-2xl uppercase tracking-tighter shadow-md">가장 인기있는 플랜</div>
                         
@@ -138,14 +140,15 @@ export const Home: React.FC = () => {
                         </div>
                         
                         <PriceBox 
-                            original={settings?.price_silver_original || "9900"} 
-                            sale={settings?.price_silver_sale || "4900"} 
+                            original={settings?.price_silver_original || "11000"} 
+                            sale={settings?.price_silver_sale || "5500"} 
                             tierId="silver"
                         />
 
                         <ul className="space-y-5 mb-12 flex-1 border-t border-slate-50 pt-8">
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-800"><CheckCircle2 size={20} className="text-primary shrink-0"/> 최대 제품 등록: {silverTier.max_products}개</li>
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-800"><CheckCircle2 size={20} className="text-primary shrink-0"/> 송장 양식 등록: {silverTier.max_templates}개</li>
+                            <li className="flex items-center gap-4 text-sm font-bold text-slate-800"><TrendingUp size={20} className="text-primary shrink-0"/> CRM 주문 저장: {(silverTier.max_crm_count ?? 300) >= 99999 ? '무제한' : `${(silverTier.max_crm_count ?? 300).toLocaleString()}건`}</li>
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-800"><CheckCircle2 size={20} className="text-primary shrink-0"/> 무제한 송장 변환 및 압축 다운로드</li>
                             <li className="flex items-center gap-4 text-sm font-[1000] text-primary italic"><CheckCircle2 size={20} className="text-primary shrink-0"/> 신규 가입 3일 체험권 적용</li>
                         </ul>
@@ -166,14 +169,15 @@ export const Home: React.FC = () => {
                         </div>
 
                         <PriceBox 
-                            original={settings?.price_gold_original || "12000"} 
-                            sale={settings?.price_gold_sale || "7900"} 
+                            original={settings?.price_gold_original || "15000"} 
+                            sale={settings?.price_gold_sale || "8800"} 
                             tierId="gold"
                         />
 
                         <ul className="space-y-5 mb-12 flex-1 border-t border-slate-50 pt-8">
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><CheckCircle2 size={20} className="text-primary shrink-0"/> 최대 제품 등록: {goldTier.max_products}개</li>
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><CheckCircle2 size={20} className="text-primary shrink-0"/> 송장 양식 등록: {goldTier.max_templates}개</li>
+                            <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><TrendingUp size={20} className="text-primary shrink-0"/> CRM 주문 저장: 무제한</li>
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><CheckCircle2 size={20} className="text-primary shrink-0"/> 우선 순위 고객 지원</li>
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><CheckCircle2 size={20} className="text-primary shrink-0"/> 일괄 대량 제품 등록 지원</li>
                         </ul>
