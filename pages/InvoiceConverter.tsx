@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
-import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube } from 'lucide-react';
 import { Button } from '../components/Button';
 import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings } from '../services/dbService';
 import { InvoiceRow, MatchedOrder, Product, ColumnMapping } from '../types';
@@ -10,7 +10,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
-const PRODUCT_NAME_HEADERS = ['상품명', '품목명', '내용물', '물품명', 'Product Name', 'Item Name'];
+// [Critical Fix] Added '상품이름', '제품명', '제품' to recognize headers correctly
+const PRODUCT_NAME_HEADERS = ['상품명', '품목명', '내용물', '물품명', '상품이름', '제품명', '제품', 'Product Name', 'Item Name', 'Product', 'Item'];
 
 // Error 153 대응 및 직접 가기 링크가 포함된 가이드 컴포넌트
 const YouTubeEmbed = ({ url, title }: { url: string; title: string }) => {
@@ -74,6 +75,7 @@ export const InvoiceConverter: React.FC = () => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [mapping, setMapping] = useState<ColumnMapping>({ sku: '', orderer: '', receiver: '', option: '' });
   const [matchedData, setMatchedData] = useState<MatchedOrder[]>([]);
+  const [dbProducts, setDbProducts] = useState<Product[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>({
     silver_subscription_url: '',
     gold_subscription_url: '',
@@ -81,9 +83,19 @@ export const InvoiceConverter: React.FC = () => {
     youtube_tutorial_product: '',
     youtube_tutorial_convert: ''
   });
+  
+  // Debug Tool State
+  const [debugSku, setDebugSku] = useState('');
+  const [debugResult, setDebugResult] = useState<any>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { if(user) fetchAppSettings().then(setAppSettings); }, [user]);
+  useEffect(() => { 
+      if(user) {
+          fetchAppSettings().then(setAppSettings);
+          fetchProducts().then(setDbProducts); // 미리 로드하여 디버깅에 사용
+      }
+  }, [user]);
 
   // SKU 정규화 헬퍼 함수: 모든 공백 및 보이지 않는 문자 제거, 소문자 변환
   const normalizeSku = (val: any) => {
@@ -149,7 +161,7 @@ export const InvoiceConverter: React.FC = () => {
     if (!mapping.sku || !mapping.orderer || !mapping.receiver) return;
     setIsProcessing(true);
     try {
-        const products = await fetchProducts();
+        const products = dbProducts.length > 0 ? dbProducts : await fetchProducts();
         
         // [Logic Update] DB SKU 정규화: 공백/특수문자 모두 제거하여 매칭 확률 극대화
         // P-001 과 P001,  53065 960858 과 53065960858 등을 같게 처리
@@ -189,6 +201,42 @@ export const InvoiceConverter: React.FC = () => {
     return { name: product.name, source: 'db_name' };
   };
 
+  const handleDebugSearch = () => {
+    if (!debugSku) return;
+    const normalizedInput = normalizeSku(debugSku);
+    const found = dbProducts.find(p => normalizeSku(p.sku) === normalizedInput);
+    
+    if (found) {
+        const canUseAlt = found.useAdditionalName === true;
+        const hasAltValue = found.additionalName && String(found.additionalName).trim().length > 0;
+        let finalDecision = '기본 제품명 사용';
+        let finalValue = found.name;
+
+        if (canUseAlt && hasAltValue) {
+            finalDecision = '대체 제품명 사용';
+            finalValue = found.additionalName || '';
+        }
+
+        setDebugResult({
+            status: 'found',
+            sku: found.sku,
+            normalizedSku: normalizedInput,
+            supplier: found.supplierName,
+            name: found.name,
+            altName: found.additionalName,
+            useAlt: found.useAdditionalName,
+            finalDecision,
+            finalValue
+        });
+    } else {
+        setDebugResult({
+            status: 'not_found',
+            sku: debugSku,
+            normalizedSku: normalizedInput
+        });
+    }
+  };
+
   const downloadExcel = async () => {
     setIsDownloading(true);
     try {
@@ -201,7 +249,13 @@ export const InvoiceConverter: React.FC = () => {
       // 파일명 생성 조건
       const isPlanMode = col1 === '플랜' && col2 === '회차';
 
-      const fileGroups = new Map<string, any>();
+      interface FileGroup {
+        fileName: string;
+        templateId: string;
+        orders: MatchedOrder[];
+      }
+      
+      const fileGroups = new Map<string, FileGroup>();
       matchedData.forEach(order => {
         if (order.status === 'matched' && order.product?.templateId) {
            let baseName = '';
@@ -214,8 +268,11 @@ export const InvoiceConverter: React.FC = () => {
            const safeName = baseName.replace(/[\\/:*?"<>|]/g, '-');
            const key = `${order.product.templateId}:::${safeName}`;
            
-           if (!fileGroups.has(key)) fileGroups.set(key, { fileName: safeName, templateId: order.product.templateId, orders: [] });
-           fileGroups.get(key).orders.push(order);
+           if (!fileGroups.has(key)) {
+             fileGroups.set(key, { fileName: safeName, templateId: order.product.templateId!, orders: [] });
+           }
+           
+           fileGroups.get(key)?.orders.push(order);
         }
       });
 
@@ -236,9 +293,11 @@ export const InvoiceConverter: React.FC = () => {
             if (ord !== rev) finalName += ` 보내는 사람_${ord}`;
             
             tpl.headers.forEach((h: string) => {
+               // [Logic V5] 템플릿의 헤더가 '상품명' 관련 단어를 포함하면 우리가 계산한 finalName을 집어넣음
                if (PRODUCT_NAME_HEADERS.some(ph => h.includes(ph))) {
                    rowData.push(finalName);
                } else {
+                   // 아니면 원본 데이터의 해당 컬럼 값을 넣음 (없으면 공란)
                    rowData.push(o.originalData[h] || '');
                }
             });
@@ -326,11 +385,56 @@ export const InvoiceConverter: React.FC = () => {
                     <Button onClick={downloadExcel} icon={<Download size={16}/>} isLoading={isDownloading}>결과 파일 다운로드</Button>
                 </div>
                 
+                {/* Manual SKU Lookup Tool */}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex items-center gap-2">
+                        <TestTube size={16} className="text-indigo-600"/>
+                        <h4 className="text-xs font-bold text-indigo-900">SKU 직접 조회 (DB 데이터 검증)</h4>
+                    </div>
+                    <div className="p-4 bg-indigo-50/30">
+                        <div className="flex gap-2 mb-3">
+                            <input 
+                                type="text" 
+                                placeholder="확인할 SKU 입력 (예: 53065960858)" 
+                                className="flex-1 text-xs border border-slate-300 rounded px-3 py-2"
+                                value={debugSku}
+                                onChange={e => setDebugSku(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && handleDebugSearch()}
+                            />
+                            <Button size="sm" onClick={handleDebugSearch} disabled={!debugSku}>조회</Button>
+                        </div>
+                        
+                        {debugResult && (
+                            <div className={`text-[11px] p-3 rounded border ${debugResult.status === 'found' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                                {debugResult.status === 'found' ? (
+                                    <div className="space-y-1">
+                                        <div className="font-bold text-green-700 flex items-center gap-1"><CheckCircle2 size={12}/> 제품 찾음</div>
+                                        <div><span className="text-slate-500">DB 저장 SKU:</span> <strong>{debugResult.sku}</strong> (정규화: {debugResult.normalizedSku})</div>
+                                        <div><span className="text-slate-500">발주처:</span> {debugResult.supplier}</div>
+                                        <div><span className="text-slate-500">기본 제품명:</span> {debugResult.name}</div>
+                                        <div><span className="text-slate-500">대체 제품명:</span> {debugResult.altName || '(없음)'}</div>
+                                        <div><span className="text-slate-500">대체명 사용설정:</span> <span className={debugResult.useAlt ? 'text-blue-600 font-bold' : 'text-slate-400'}>{debugResult.useAlt ? 'TRUE (사용함)' : 'FALSE (사용안함)'}</span></div>
+                                        <div className="mt-2 pt-2 border-t border-green-200 text-green-800">
+                                            <span className="font-bold">➔ 최종 로직 결과:</span> {debugResult.finalDecision} <br/>
+                                            <span className="font-bold text-lg bg-white/50 px-1 rounded">{debugResult.finalValue}</span>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-red-600 font-bold">
+                                        ❌ DB에서 제품을 찾을 수 없습니다.<br/>
+                                        <span className="font-normal text-xs text-red-500">입력값: {debugResult.sku} (정규화: {debugResult.normalizedSku})</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 {/* Debugging Table Section */}
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                     <div className="p-3 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
                         <ListFilter size={16} className="text-slate-500"/>
-                        <h4 className="text-xs font-bold text-slate-700">매칭 상세 리스트 (디버깅용)</h4>
+                        <h4 className="text-xs font-bold text-slate-700">매칭 상세 리스트 (전체)</h4>
                     </div>
                     <div className="overflow-auto max-h-[400px]">
                         <table className="w-full text-left text-[10px]">
