@@ -85,18 +85,60 @@ export const InvoiceConverter: React.FC = () => {
 
   useEffect(() => { if(user) fetchAppSettings().then(setAppSettings); }, [user]);
 
+  // SKU 정규화 헬퍼 함수: 모든 공백 및 보이지 않는 문자 제거, 소문자 변환
+  const normalizeSku = (val: any) => {
+      return String(val || '').replace(/[\s\u200B-\u200D\uFEFF]/g, '').toLowerCase();
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (evt) => {
-      const wb = XLSX.read(evt.target?.result, { type: 'binary' });
+      const bstr = evt.target?.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+
+      // [V5 Critical Fix]
+      // 기존의 sheet_to_json(object 모드) 대신 header: 1 (Array 모드)를 사용하여
+      // 엑셀의 컬럼 순서(Index)를 기반으로 데이터를 파싱합니다.
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' }) as any[][];
+
       if (data.length > 0) {
-        setHeaders(data[0] as string[]);
-        setRawRows(XLSX.utils.sheet_to_json(ws) as InvoiceRow[]);
+        // 1. 헤더 처리 및 고유 키 생성
+        const headerRow = data[0];
+        const uniqueHeaders: string[] = [];
+        const counts: Record<string, number> = {};
+
+        headerRow.forEach((h: any) => {
+            let key = (h !== undefined && h !== null) ? String(h).trim() : '';
+            if (key === '') key = 'UNKNOWN'; // 빈 헤더 이름 처리
+
+            if (Object.prototype.hasOwnProperty.call(counts, key)) {
+                uniqueHeaders.push(`${key}_${counts[key]}`);
+                counts[key]++;
+            } else {
+                uniqueHeaders.push(key);
+                counts[key] = 1;
+            }
+        });
+
+        // 2. 데이터 행 생성 (헤더 인덱스와 1:1 매칭)
+        const rows = data.slice(1).map((rowArray) => {
+            const rowObj: InvoiceRow = {};
+            uniqueHeaders.forEach((header, index) => {
+                const val = rowArray[index];
+                rowObj[header] = (val !== undefined && val !== null) ? val : '';
+            });
+            return rowObj;
+        });
+
+        // 3. 완전히 비어있는 행 제거
+        const validRows = rows.filter(r => Object.values(r).some(v => String(v).trim() !== ''));
+
+        setHeaders(uniqueHeaders);
+        setRawRows(validRows);
         setStep(2);
       }
     };
@@ -108,14 +150,23 @@ export const InvoiceConverter: React.FC = () => {
     setIsProcessing(true);
     try {
         const products = await fetchProducts();
-        const productMap = new Map(products.map(p => [p.sku.toLowerCase(), p]));
-        const results: MatchedOrder[] = rawRows.map((row, idx) => ({
-            id: `ROW-${idx}`,
-            originalData: row,
-            product: productMap.get(String(row[mapping.sku] || '').trim().toLowerCase()),
-            status: productMap.has(String(row[mapping.sku] || '').trim().toLowerCase()) ? 'matched' : 'unmatched',
-            templateId: productMap.get(String(row[mapping.sku] || '').trim().toLowerCase())?.templateId
-        }));
+        
+        // [Logic Update] DB SKU 정규화: 공백/특수문자 모두 제거하여 매칭 확률 극대화
+        // P-001 과 P001,  53065 960858 과 53065960858 등을 같게 처리
+        const productMap = new Map(products.map(p => [normalizeSku(p.sku), p]));
+        
+        const results: MatchedOrder[] = rawRows.map((row, idx) => {
+            // [Logic Update] 엑셀 SKU 정규화
+            const cellValue = normalizeSku(row[mapping.sku]);
+            const matchedProduct = productMap.get(cellValue);
+            return {
+                id: `ROW-${idx}`,
+                originalData: row,
+                product: matchedProduct,
+                status: matchedProduct ? 'matched' : 'unmatched',
+                templateId: matchedProduct?.templateId
+            };
+        });
         setMatchedData(results);
         setStep(3);
     } catch (e) { alert("처리 오류"); } finally { setIsProcessing(false); }
@@ -130,7 +181,7 @@ export const InvoiceConverter: React.FC = () => {
       const col1 = headers[0];
       const col2 = headers[1];
 
-      // 파일명 생성 조건: 첫 번째 열이 '플랜', 두 번째 열이 '회차'일 때만 해당 값들을 파일명에 포함
+      // 파일명 생성 조건
       const isPlanMode = col1 === '플랜' && col2 === '회차';
 
       const fileGroups = new Map<string, any>();
@@ -140,13 +191,10 @@ export const InvoiceConverter: React.FC = () => {
            if (isPlanMode) {
                baseName = `${String(order.originalData[col1] || 'Unknown')}_${String(order.originalData[col2] || 'Unknown')}_${order.product.supplierName}`;
            } else {
-               // 일반적인 경우: 발주처명으로만 파일 생성 (발주처명이 같으면 하나의 파일로 묶임)
                baseName = order.product.supplierName;
            }
 
            const safeName = baseName.replace(/[\\/:*?"<>|]/g, '-');
-           
-           // TemplateID + FileName을 키로 사용하여 그룹화 (같은 발주처라도 템플릿이 다르면 파일 분리)
            const key = `${order.product.templateId}:::${safeName}`;
            
            if (!fileGroups.has(key)) fileGroups.set(key, { fileName: safeName, templateId: order.product.templateId, orders: [] });
@@ -158,19 +206,36 @@ export const InvoiceConverter: React.FC = () => {
          const tpl = templateMap.get(group.templateId);
          if (!tpl) return;
          
-         // 2단 헤더 로직 적용: 출력용 헤더가 있으면 사용, 없으면 기존 매핑용 헤더 사용
          const finalHeaders = (tpl.outputHeaders && tpl.outputHeaders.length > 0) ? tpl.outputHeaders : tpl.headers;
 
-         // 데이터 행 생성 (객체 배열이 아닌, 배열의 배열(AOA)로 생성하여 컬럼 순서 보장)
          const dataRows = group.orders.map((o: any) => {
             const rowData: any[] = [];
             const product = o.product!;
-            let pName = mapping.option && o.originalData[mapping.option] ? String(o.originalData[mapping.option]).trim() : (product.useAdditionalName ? product.additionalName : product.name);
+            
+            // [Logic V4: 제품명 결정 로직 엄격화]
+            // 사용자의 요청: "대체 제품명이 있으면 무조건 대체 제품명 사용, 단 설정이 켜져 있을 때만."
+            
+            // 1. 기본값: DB에 등록된 제품명 (엑셀의 상품명 아님)
+            let pName = product.name; 
+
+            // 2. 조건 확인: (대체 이름 사용 설정 ON) AND (대체 이름 값이 존재)
+            const canUseAlt = product.useAdditionalName === true;
+            const hasAltValue = product.additionalName && String(product.additionalName).trim().length > 0;
+
+            if (canUseAlt && hasAltValue) {
+                // 조건 만족 시: 대체 제품명 사용
+                pName = String(product.additionalName).trim();
+            } else if (mapping.option && o.originalData[mapping.option]) {
+                // 3. 대체 제품명을 쓰지 않는 경우에만: 옵션 열이 매핑되어 있고 값이 있으면 사용
+                const optVal = String(o.originalData[mapping.option]).trim();
+                if (optVal) pName = optVal;
+            }
+
+            // 받는 사람/보내는 사람 다를 경우 표기 (유지)
             const ord = String(o.originalData[mapping.orderer] || '').trim();
             const rev = String(o.originalData[mapping.receiver] || '').trim();
             if (ord !== rev) pName += ` 보내는 사람_${ord}`;
             
-            // tpl.headers(매핑용 키)를 순회하며 데이터를 찾아 넣음
             tpl.headers.forEach((h: string) => {
                if (PRODUCT_NAME_HEADERS.some(ph => h.includes(ph))) {
                    rowData.push(pName);
@@ -181,11 +246,10 @@ export const InvoiceConverter: React.FC = () => {
             return rowData;
          });
 
-         // 최종 데이터: [출력용 헤더, ...데이터행들]
          const finalSheetData = [finalHeaders, ...dataRows];
          
          const wb = XLSX.utils.book_new();
-         const ws = XLSX.utils.aoa_to_sheet(finalSheetData); // json_to_sheet 대신 aoa_to_sheet 사용
+         const ws = XLSX.utils.aoa_to_sheet(finalSheetData); 
          
          XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
          zip.file(`${group.fileName}.xlsx`, XLSX.write(wb, { bookType: 'xlsx', type: 'array' }));
@@ -258,7 +322,7 @@ export const InvoiceConverter: React.FC = () => {
                     </div>
                     <div className="text-center">
                         <p className="text-sm font-bold text-slate-900">데이터 처리 완료</p>
-                        <p className="text-[11px] text-slate-500 mt-1">총 {matchedData.length}건의 분석 결과 파일입니다.</p>
+                        <p className="text-[11px] text-slate-500 mt-1">총 {matchedData.filter(d => d.status === 'matched').length}건 / 전체 {matchedData.length}건 변환 성공</p>
                     </div>
                     <Button onClick={downloadExcel} icon={<Download size={16}/>} isLoading={isDownloading}>결과 파일 다운로드</Button>
                 </div>
