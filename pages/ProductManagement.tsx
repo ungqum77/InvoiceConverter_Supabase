@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { Plus, Trash2, Search, Save, X, FileSpreadsheet, Upload, Settings2, Building2, Tag, CheckSquare, Pencil, Lock, Zap, UserCog, LogOut, AlertOctagon, Calendar, History, Clock, Download, ArrowUpCircle, CreditCard, Award, Youtube, AlertTriangle, RefreshCw, ExternalLink, Sparkles, ChevronRight, FileUp, Check, ArrowDownCircle, DollarSign, PackageCheck } from 'lucide-react';
@@ -312,8 +311,9 @@ export const ProductManagement: React.FC = () => {
   const handleSubscriptionLink = (url: string) => { if (url) window.open(url, '_blank'); else alert("준비 중입니다."); };
 
   // Helper to estimate profit for UI
-  const estProfit = (p: number, c: number, f: number) => {
-      return p - c - (p * (f/100));
+  const estProfit = (p: number, c: number, s: number, o: number, f: number) => {
+      // 매출 - 매입 - 택배비 - 기타 - 수수료
+      return Math.round(p - c - s - o - (p * (f/100)));
   };
 
   return (
@@ -406,7 +406,13 @@ export const ProductManagement: React.FC = () => {
                               <td className="px-6 py-4 text-right font-mono text-slate-500">{p.purchaseCost?.toLocaleString()}</td>
                               <td className="px-6 py-4 text-right font-mono font-bold">{p.salesPrice?.toLocaleString()}</td>
                               <td className="px-6 py-4 text-right font-mono text-indigo-600 font-bold">
-                                  {estProfit(p.salesPrice || 0, p.purchaseCost || 0, p.marketFeeRate || 0).toLocaleString()}
+                                  {estProfit(
+                                      p.salesPrice || 0, 
+                                      p.purchaseCost || 0, 
+                                      p.shippingCost || 0,
+                                      p.otherCost || 0,
+                                      p.marketFeeRate || 0
+                                  ).toLocaleString()}
                               </td>
                               <td className="px-6 py-4 text-right">
                                 <div className="flex justify-end gap-2">
@@ -532,7 +538,7 @@ export const ProductManagement: React.FC = () => {
               <div className="md:col-span-2 bg-indigo-50 border border-indigo-100 rounded-lg p-4 flex justify-between items-center">
                   <span className="text-xs font-bold text-indigo-800">예상 개당 순수익</span>
                   <span className="text-lg font-black text-indigo-600">
-                      {estProfit(salesPrice, purchaseCost, marketFeeRate).toLocaleString()} 원
+                      {estProfit(salesPrice, purchaseCost, shippingCost, otherCost, marketFeeRate).toLocaleString()} 원
                   </span>
               </div>
 
