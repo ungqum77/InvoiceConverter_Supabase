@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
-import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter } from 'lucide-react';
 import { Button } from '../components/Button';
 import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings } from '../services/dbService';
 import { InvoiceRow, MatchedOrder, Product, ColumnMapping } from '../types';
@@ -172,6 +172,23 @@ export const InvoiceConverter: React.FC = () => {
     } catch (e) { alert("처리 오류"); } finally { setIsProcessing(false); }
   };
 
+  // Helper function to calculate final name (Used in Step 3 Debug view)
+  const getResolvedProductName = (order: MatchedOrder) => {
+    if (order.status !== 'matched' || !order.product) return { name: '', source: 'none' };
+    
+    const product = order.product;
+    const canUseAlt = product.useAdditionalName === true;
+    const hasAltValue = product.additionalName && String(product.additionalName).trim().length > 0;
+
+    if (canUseAlt && hasAltValue) {
+        return { name: String(product.additionalName).trim(), source: 'alt_name' };
+    } else if (mapping.option && order.originalData[mapping.option]) {
+        const optVal = String(order.originalData[mapping.option]).trim();
+        if (optVal) return { name: optVal, source: 'option_col' };
+    }
+    return { name: product.name, source: 'db_name' };
+  };
+
   const downloadExcel = async () => {
     setIsDownloading(true);
     try {
@@ -210,35 +227,17 @@ export const InvoiceConverter: React.FC = () => {
 
          const dataRows = group.orders.map((o: any) => {
             const rowData: any[] = [];
-            const product = o.product!;
-            
-            // [Logic V4: 제품명 결정 로직 엄격화]
-            // 사용자의 요청: "대체 제품명이 있으면 무조건 대체 제품명 사용, 단 설정이 켜져 있을 때만."
-            
-            // 1. 기본값: DB에 등록된 제품명 (엑셀의 상품명 아님)
-            let pName = product.name; 
-
-            // 2. 조건 확인: (대체 이름 사용 설정 ON) AND (대체 이름 값이 존재)
-            const canUseAlt = product.useAdditionalName === true;
-            const hasAltValue = product.additionalName && String(product.additionalName).trim().length > 0;
-
-            if (canUseAlt && hasAltValue) {
-                // 조건 만족 시: 대체 제품명 사용
-                pName = String(product.additionalName).trim();
-            } else if (mapping.option && o.originalData[mapping.option]) {
-                // 3. 대체 제품명을 쓰지 않는 경우에만: 옵션 열이 매핑되어 있고 값이 있으면 사용
-                const optVal = String(o.originalData[mapping.option]).trim();
-                if (optVal) pName = optVal;
-            }
+            const { name: pName } = getResolvedProductName(o); // Use same logic helper
 
             // 받는 사람/보내는 사람 다를 경우 표기 (유지)
             const ord = String(o.originalData[mapping.orderer] || '').trim();
             const rev = String(o.originalData[mapping.receiver] || '').trim();
-            if (ord !== rev) pName += ` 보내는 사람_${ord}`;
+            let finalName = pName;
+            if (ord !== rev) finalName += ` 보내는 사람_${ord}`;
             
             tpl.headers.forEach((h: string) => {
                if (PRODUCT_NAME_HEADERS.some(ph => h.includes(ph))) {
-                   rowData.push(pName);
+                   rowData.push(finalName);
                } else {
                    rowData.push(o.originalData[h] || '');
                }
@@ -326,6 +325,75 @@ export const InvoiceConverter: React.FC = () => {
                     </div>
                     <Button onClick={downloadExcel} icon={<Download size={16}/>} isLoading={isDownloading}>결과 파일 다운로드</Button>
                 </div>
+                
+                {/* Debugging Table Section */}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                    <div className="p-3 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
+                        <ListFilter size={16} className="text-slate-500"/>
+                        <h4 className="text-xs font-bold text-slate-700">매칭 상세 리스트 (디버깅용)</h4>
+                    </div>
+                    <div className="overflow-auto max-h-[400px]">
+                        <table className="w-full text-left text-[10px]">
+                            <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                                <tr>
+                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">입력 SKU (Excel)</th>
+                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">매칭된 제품 (DB)</th>
+                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">발주처</th>
+                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">기본 제품명</th>
+                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">대체 제품명</th>
+                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">사용여부</th>
+                                    <th className="px-3 py-2 font-bold text-primary whitespace-nowrap">최종 결정된 이름</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {matchedData.map((row) => {
+                                    const { name: finalName, source } = getResolvedProductName(row);
+                                    const rawSku = String(row.originalData[mapping.sku] || '');
+                                    const isMatched = row.status === 'matched';
+                                    
+                                    return (
+                                        <tr key={row.id} className={`hover:bg-slate-50 ${!isMatched ? 'bg-red-50/30' : ''}`}>
+                                            <td className="px-3 py-2 font-mono text-slate-600 border-r border-slate-100 max-w-[120px] truncate" title={rawSku}>
+                                                {rawSku || <span className="text-red-300">(비어있음)</span>}
+                                            </td>
+                                            <td className="px-3 py-2 font-medium">
+                                                {isMatched ? (
+                                                    <span className="text-green-600 flex items-center gap-1">
+                                                        <CheckCircle2 size={10}/> {row.product?.sku}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-red-400 text-[9px]">매칭 실패</span>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2 text-slate-500 truncate max-w-[100px]">{row.product?.supplierName || '-'}</td>
+                                            <td className="px-3 py-2 text-slate-500 truncate max-w-[150px]" title={row.product?.name}>{row.product?.name || '-'}</td>
+                                            <td className="px-3 py-2 text-slate-500 truncate max-w-[150px]" title={row.product?.additionalName}>{row.product?.additionalName || '-'}</td>
+                                            <td className="px-3 py-2 text-center">
+                                                {row.product?.useAdditionalName ? (
+                                                    <span className="text-green-600 font-bold">TRUE</span>
+                                                ) : (
+                                                    <span className="text-slate-300">FALSE</span>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2 font-bold border-l border-slate-100 truncate max-w-[200px]" title={finalName}>
+                                                {finalName ? (
+                                                    <span className={`${
+                                                        source === 'alt_name' ? 'text-green-600 bg-green-50 px-1.5 py-0.5 rounded' : 
+                                                        source === 'option_col' ? 'text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded' : 
+                                                        'text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded'
+                                                    }`}>
+                                                        {finalName}
+                                                    </span>
+                                                ) : '-'}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <div className="bg-slate-50 p-4 rounded-xl border h-48">
                     <h4 className="text-[10px] font-bold text-slate-500 mb-2 uppercase">분류 현황</h4>
                     <ResponsiveContainer width="100%" height="80%">
