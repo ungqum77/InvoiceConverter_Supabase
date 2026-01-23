@@ -232,8 +232,14 @@ export const InvoiceConverter: React.FC = () => {
 
   const saveCrmDataOnly = async (records: any[]) => {
       if (saveToCrm && records.length > 0) {
-          await saveSalesRecords(records);
-          console.log("CRM Data Saved");
+          const result = await saveSalesRecords(records);
+          if (result && result.skippedCount > 0) {
+              const preview = result.skippedItems.slice(0, 3).map((i: any) => `${i.product_name} (주문: ${i.order_id})`).join(', ');
+              console.log(`CRM: ${result.savedCount}건 저장, ${result.skippedCount}건 중복 제외. (${preview} 등)`);
+              alert(`CRM 저장 완료: ${result.savedCount}건 저장.\n(중복된 주문 ${result.skippedCount}건은 제외되었습니다)\n제외 예시: ${preview}`);
+          } else {
+              console.log("CRM Data Saved");
+          }
       }
   };
 
@@ -333,27 +339,89 @@ export const InvoiceConverter: React.FC = () => {
           const monthDir = await yearDir.getDirectoryHandle(month, { create: true });
           const targetDir = await monthDir.getDirectoryHandle(dateDirName, { create: true });
 
-          // Helper: Write with versioning if file exists
-          const writeExcelWithVersioning = async (dirHandle: any, baseName: string, content: any) => {
-             let fileName = `${baseName}.xlsx`;
-             let counter = 1;
-             
-             // Check if file exists and increment version
-             while (true) {
-                 try {
-                     await dirHandle.getFileHandle(fileName); // Throws if not found
-                     // File exists, create new name
-                     fileName = `${baseName}_version_${String(counter).padStart(2, '0')}.xlsx`;
-                     counter++;
-                 } catch (e) {
-                     // File not found, safe to use this name
-                     break;
+          // Helper: Append with duplication check
+          // Checks Order ID + Orderer + Receiver + Product Name
+          const appendExcelWithDedup = async (dirHandle: any, baseName: string, tpl: any, newRows: any[][], headers: string[]) => {
+             const fileName = `${baseName}.xlsx`;
+             let finalData = [headers, ...newRows]; // Default: Create New
+
+             try {
+                 // Try to read existing file
+                 const fileHandle = await dirHandle.getFileHandle(fileName);
+                 const file = await fileHandle.getFile();
+                 const arrayBuffer = await file.arrayBuffer();
+                 const wb = XLSX.read(arrayBuffer, { type: 'array' });
+                 const ws = wb.Sheets[wb.SheetNames[0]];
+                 const existingData = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][]; // Array of Arrays
+
+                 if (existingData.length > 0) {
+                     const existingHeaders = existingData[0] as string[];
+                     // Identify key column indices in Existing File
+                     // Mapping Input Headers -> Template Output Headers logic is tricky here because
+                     // we need to find which column in the OUTPUT matches the INPUT mapping key.
+                     // Simpler approach: Look for header names that matches the mapping keys OR standard columns.
+                     
+                     // Helper to find index by potential header names
+                     const findIdx = (candidates: string[]) => existingHeaders.findIndex(h => candidates.includes(String(h).trim()));
+                     
+                     const orderIdIdx = mapping.orderId ? findIdx([mapping.orderId]) : -1;
+                     const ordererIdx = findIdx([mapping.orderer, '주문자', '보내는사람']);
+                     const receiverIdx = findIdx([mapping.receiver, '수취인', '받는사람']);
+                     
+                     // For Product Name, we look for mapping.productName OR common product headers
+                     const productCandidates = mapping.productName ? [mapping.productName, ...PRODUCT_NAME_HEADERS] : PRODUCT_NAME_HEADERS;
+                     const productIdx = findIdx(productCandidates);
+
+                     // Only perform deduplication if we can identify at least Order ID column
+                     if (orderIdIdx !== -1) {
+                         const existingKeys = new Set<string>();
+                         // Start from row 1 (skip header)
+                         for(let i=1; i<existingData.length; i++) {
+                             const r = existingData[i];
+                             const oid = String(r[orderIdIdx] || '').trim();
+                             const ord = ordererIdx !== -1 ? String(r[ordererIdx] || '').trim() : '';
+                             const rcv = receiverIdx !== -1 ? String(r[receiverIdx] || '').trim() : '';
+                             const prd = productIdx !== -1 ? String(r[productIdx] || '').trim() : '';
+                             
+                             // Key: OrderID + Orderer + Receiver + Product
+                             existingKeys.add(`${oid}_${ord}_${rcv}_${prd}`);
+                         }
+
+                         // Filter new rows
+                         const uniqueNewRows = newRows.filter(r => {
+                             const oid = String(r[orderIdIdx] || '').trim();
+                             const ord = ordererIdx !== -1 ? String(r[ordererIdx] || '').trim() : '';
+                             const rcv = receiverIdx !== -1 ? String(r[receiverIdx] || '').trim() : '';
+                             const prd = productIdx !== -1 ? String(r[productIdx] || '').trim() : '';
+                             
+                             const key = `${oid}_${ord}_${rcv}_${prd}`;
+                             return !existingKeys.has(key);
+                         });
+                         
+                         if (uniqueNewRows.length < newRows.length) {
+                             console.log(`Skipped ${newRows.length - uniqueNewRows.length} duplicates for ${fileName}`);
+                         }
+                         
+                         // Append only unique rows to existing data
+                         finalData = [...existingData, ...uniqueNewRows];
+                     } else {
+                         // Can't identify Order ID column, just append everything (fallback)
+                         finalData = [...existingData, ...newRows];
+                     }
                  }
+             } catch (e) {
+                 // File doesn't exist, create new (finalData is already set)
              }
+
+             // Write
+             const wb = XLSX.utils.book_new();
+             const ws = XLSX.utils.aoa_to_sheet(finalData);
+             XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+             const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
 
              const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
              const writable = await fileHandle.createWritable();
-             await writable.write(content);
+             await writable.write(buffer);
              await writable.close();
           };
 
@@ -364,7 +432,7 @@ export const InvoiceConverter: React.FC = () => {
               
               const supplierDir = await targetDir.getDirectoryHandle(group.supplier, { create: true });
 
-              // Build Excel
+              // Prepare New Rows
               const finalHeaders = (tpl.outputHeaders && tpl.outputHeaders.length > 0) ? tpl.outputHeaders : tpl.headers;
               const dataRows = group.orders.map((o: any) => {
                 const rowData: any[] = [];
@@ -383,44 +451,32 @@ export const InvoiceConverter: React.FC = () => {
                 });
                 return rowData;
               });
-
-              const finalSheetData = [finalHeaders, ...dataRows];
-              const wb = XLSX.utils.book_new();
-              const ws = XLSX.utils.aoa_to_sheet(finalSheetData); 
-              XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-              const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
               
-              // Use versioning logic
-              await writeExcelWithVersioning(supplierDir, group.fileName, excelBuffer);
+              // Use Append/Dedup Logic
+              await appendExcelWithDedup(supplierDir, group.fileName, tpl, dataRows, finalHeaders);
           }
 
-          // 4. Write or Append Summary
+          // 4. Write or Append Summary (Existing logic maintained)
           const summaryFileName = `00_정산요약_${date}.xlsx`;
           const newSummaryRows = Object.entries(financialSummary).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
           
           let finalSummaryData = newSummaryRows;
           
           try {
-              // Try to read existing summary
               const existingHandle = await targetDir.getFileHandle(summaryFileName);
               const file = await existingHandle.getFile();
               const arrayBuffer = await file.arrayBuffer();
               const wb = XLSX.read(arrayBuffer, { type: 'array' });
               const ws = wb.Sheets[wb.SheetNames[0]];
               const existingData = XLSX.utils.sheet_to_json(ws);
-              
-              // Append new rows to existing data
               finalSummaryData = [...existingData, ...newSummaryRows] as any[];
-          } catch (e) {
-              // File doesn't exist, use new data only
-          }
+          } catch (e) { /* Create new */ }
 
           const summaryWs = XLSX.utils.json_to_sheet(finalSummaryData);
           const summaryWb = XLSX.utils.book_new();
           XLSX.utils.book_append_sheet(summaryWb, summaryWs, "정산요약");
           const summaryBuffer = XLSX.write(summaryWb, { bookType: 'xlsx', type: 'array' });
           
-          // Write (Overwrite/Create) the summary file
           const summaryFileHandle = await targetDir.getFileHandle(summaryFileName, { create: true });
           const summaryWritable = await summaryFileHandle.createWritable();
           await summaryWritable.write(summaryBuffer);
@@ -429,7 +485,7 @@ export const InvoiceConverter: React.FC = () => {
           // 5. Save CRM
           await saveCrmDataOnly(salesRecordsToSave);
 
-          alert("저장이 완료되었습니다! 선택하신 폴더를 확인해주세요.");
+          alert("저장이 완료되었습니다! 선택하신 폴더를 확인해주세요.\n(중복된 주문 건은 자동으로 제외하고 저장되었습니다)");
 
       } catch (e: any) {
           if (e.name !== 'AbortError') { // User cancelled picker
@@ -546,10 +602,10 @@ export const InvoiceConverter: React.FC = () => {
                         ZIP 다운로드
                     </Button>
                     <Button onClick={handleDirectFolderSave} icon={<HardDrive size={16}/>} isLoading={isFolderSaving} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white border-transparent">
-                        폴더 선택 및 자동 저장
+                        폴더 선택 및 자동 저장 (중복 방지)
                     </Button>
                 </div>
-                <p className="text-[10px] text-center text-slate-400 mt-2">* '폴더 자동 저장'은 Chrome, Edge 브라우저에서 지원됩니다.</p>
+                <p className="text-[10px] text-center text-slate-400 mt-2">* '폴더 자동 저장' 사용 시 동일 주문번호는 자동으로 제외하고 추가됩니다.</p>
             </div>
             
             <div className="flex justify-center">

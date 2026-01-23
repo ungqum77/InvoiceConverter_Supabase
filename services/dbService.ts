@@ -256,10 +256,49 @@ export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'create
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
     
-    // Batch Insert
-    const { error } = await supabase.from('sales_records').insert(records);
-    if (error) throw error;
-    await logActivity(user.id, 'SAVE_SALES', `${records.length}건의 매출 기록 저장`);
+    // Extract Order IDs to check for duplicates
+    // We only check duplicates if Order ID is present.
+    const inputOrderIds = records.map(r => r.order_id).filter(Boolean) as string[];
+
+    let newRecords = records;
+    const skipped: any[] = [];
+
+    if (inputOrderIds.length > 0) {
+        // Fetch existing records that match the order IDs
+        const { data: existingData, error: fetchError } = await supabase
+            .from('sales_records')
+            .select('order_id, supplier_name, product_name')
+            .in('order_id', inputOrderIds)
+            .eq('user_id', user.id);
+            
+        if (fetchError) throw fetchError;
+
+        if (existingData && existingData.length > 0) {
+            newRecords = [];
+            for (const rec of records) {
+                // Duplicate Criteria: Order ID + Supplier + Product Name match
+                const isDuplicate = existingData.some((existing: any) => 
+                    existing.order_id === rec.order_id && 
+                    existing.supplier_name === rec.supplier_name &&
+                    existing.product_name === rec.product_name
+                );
+
+                if (isDuplicate) {
+                    skipped.push(rec);
+                } else {
+                    newRecords.push(rec);
+                }
+            }
+        }
+    }
+
+    if (newRecords.length > 0) {
+        const { error } = await supabase.from('sales_records').insert(newRecords);
+        if (error) throw error;
+        await logActivity(user.id, 'SAVE_SALES', `${newRecords.length}건의 매출 기록 저장 (중복 ${skipped.length}건 제외)`);
+    }
+
+    return { savedCount: newRecords.length, skippedCount: skipped.length, skippedItems: skipped };
 };
 
 export const fetchSalesRecords = async (startDate: string, endDate: string): Promise<SalesRecord[]> => {

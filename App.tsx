@@ -14,7 +14,7 @@ import { Button } from './components/Button';
 
 // --- ErrorBoundary Component ---
 interface ErrorBoundaryProps { 
-  children?: ReactNode; 
+  children: ReactNode; 
 }
 
 interface ErrorBoundaryState { 
@@ -23,6 +23,10 @@ interface ErrorBoundaryState {
 }
 
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+  }
+
   public state: ErrorBoundaryState = {
     hasError: false,
     error: null
