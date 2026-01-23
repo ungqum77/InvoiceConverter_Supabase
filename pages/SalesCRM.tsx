@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { fetchSalesRecords, deleteSalesRecords } from '../services/dbService';
 import { SalesRecord } from '../types';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Calendar, TrendingUp, Filter, Download, PieChart, BarChart2, RefreshCw, Trash2, Calculator, CheckSquare, Square } from 'lucide-react';
+import { Calendar, TrendingUp, Filter, Download, PieChart, BarChart2, RefreshCw, Trash2, Calculator, CheckSquare, Square, AlertTriangle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Button } from '../components/Button';
 
@@ -64,6 +64,21 @@ export const SalesCRM: React.FC = () => {
         return matchesSupplier && matchesProduct;
     });
 
+    // 중복 주문번호 확인 (현재 리스트 내에서)
+    const duplicateOrderIds = useMemo(() => {
+        const counts = new Map<string, number>();
+        filteredRecords.forEach(r => {
+            if (r.order_id) {
+                counts.set(r.order_id, (counts.get(r.order_id) || 0) + 1);
+            }
+        });
+        const duplicates = new Set<string>();
+        counts.forEach((count, id) => {
+            if (count > 1) duplicates.add(id);
+        });
+        return duplicates;
+    }, [filteredRecords]);
+
     // Stats Calculation
     const totalSales = filteredRecords.reduce((sum, r) => sum + r.total_sales_amount, 0);
     const totalPurchase = filteredRecords.reduce((sum, r) => sum + r.total_purchase_amount, 0);
@@ -91,6 +106,7 @@ export const SalesCRM: React.FC = () => {
     const downloadReport = () => {
         const ws = XLSX.utils.json_to_sheet(filteredRecords.map(r => ({
             "날짜": new Date(r.order_date).toLocaleDateString(),
+            "주문번호": r.order_id || '',
             "발주처": r.supplier_name,
             "제품명": r.product_name,
             "SKU": r.product_sku,
@@ -241,6 +257,7 @@ export const SalesCRM: React.FC = () => {
                                     </button>
                                 </th>
                                 <th className="px-4 py-3 whitespace-nowrap bg-slate-50">날짜</th>
+                                <th className="px-4 py-3 whitespace-nowrap bg-slate-50">주문번호</th>
                                 <th className="px-4 py-3 whitespace-nowrap bg-slate-50">발주처</th>
                                 <th className="px-4 py-3 bg-slate-50">제품명 (옵션포함)</th>
                                 <th className="px-4 py-3 text-right bg-slate-50">수량</th>
@@ -252,10 +269,12 @@ export const SalesCRM: React.FC = () => {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {filteredRecords.length === 0 ? (
-                                <tr><td colSpan={9} className="p-12 text-center text-slate-400">해당 기간의 데이터가 없습니다.</td></tr>
+                                <tr><td colSpan={10} className="p-12 text-center text-slate-400">해당 기간의 데이터가 없습니다.</td></tr>
                             ) : (
                                 filteredRecords.map(r => {
                                     const itemRoi = r.total_sales_amount > 0 ? (r.net_profit / r.total_sales_amount) * 100 : 0;
+                                    const isDuplicate = r.order_id && duplicateOrderIds.has(r.order_id);
+                                    
                                     return (
                                         <tr key={r.id} className={`hover:bg-slate-50 transition-colors ${selectedIds.has(r.id) ? 'bg-blue-50/50' : ''}`}>
                                             <td className="px-4 py-3 text-center">
@@ -264,6 +283,13 @@ export const SalesCRM: React.FC = () => {
                                                 </button>
                                             </td>
                                             <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{new Date(r.order_date).toLocaleDateString()}</td>
+                                            <td className="px-4 py-3 font-mono text-slate-500 whitespace-nowrap">
+                                                {isDuplicate ? (
+                                                    <div className="flex items-center gap-1 text-amber-600 font-bold" title="중복된 주문번호입니다.">
+                                                        <AlertTriangle size={12}/> {r.order_id}
+                                                    </div>
+                                                ) : r.order_id || '-'}
+                                            </td>
                                             <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">{r.supplier_name}</td>
                                             <td className="px-4 py-3 max-w-[300px]" title={r.product_name}>
                                                 <div className="line-clamp-1">{r.product_name}</div>
@@ -283,7 +309,7 @@ export const SalesCRM: React.FC = () => {
                         {filteredRecords.length > 0 && (
                             <tfoot className="sticky bottom-0 z-10 bg-slate-100 font-black text-slate-800 border-t-2 border-slate-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
                                 <tr>
-                                    <td colSpan={4} className="px-4 py-3 text-center">합 계</td>
+                                    <td colSpan={5} className="px-4 py-3 text-center">합 계</td>
                                     <td className="px-4 py-3 text-right font-mono text-slate-900">{totalOrders.toLocaleString()}</td>
                                     <td className="px-4 py-3 text-right font-mono text-blue-700">{totalSales.toLocaleString()}</td>
                                     <td className="px-4 py-3 text-right font-mono text-red-600">{totalPurchase.toLocaleString()}</td>

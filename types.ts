@@ -24,6 +24,7 @@ export interface SalesRecord {
   product_name: string;
   product_sku: string;
   supplier_name: string;
+  order_id?: string; // 주문번호 (중복 체크용)
   quantity: number;
   
   unit_sales_price: number;
@@ -67,6 +68,7 @@ export interface ColumnMapping {
   receiver: string; 
   option: string; 
   quantity: string; // (New) 수량 열
+  orderId: string; // (New) 주문번호 열
 }
 
 export interface Tier {

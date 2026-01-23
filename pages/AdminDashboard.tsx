@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useMemo } from 'react';
 import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings } from '../services/dbService';
 import { UserProfile, ActivityLog } from '../types';
@@ -64,13 +65,17 @@ export const AdminDashboard: React.FC = () => {
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'created_at', direction: 'desc' });
 
     // DB의 tiers 테이블 수치를 최신 정책에 맞게 강제 업데이트하는 쿼리 추가
-    const SQL_SOLUTION = `-- [SQL V18] 등급 정책 최적화 패치
--- 1. 등급별 제한 수치 동기화 (FREE 2/1 하향, 실버 8/3, 골드 100/50)
+    const SQL_SOLUTION = `-- [SQL V19] 주문번호 추가 및 등급 정책 패치
+-- 1. Sales Records에 주문번호(order_id) 컬럼 추가
+ALTER TABLE public.sales_records ADD COLUMN IF NOT EXISTS order_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_sales_records_order_id ON public.sales_records(order_id);
+
+-- 2. 등급별 제한 수치 동기화
 UPDATE public.tiers SET max_products = 2, max_templates = 1 WHERE id = 'free';
 UPDATE public.tiers SET max_products = 8, max_templates = 3 WHERE id = 'silver';
 UPDATE public.tiers SET max_products = 100, max_templates = 50 WHERE id = 'gold';
 
--- 2. 시스템 설정 테이블 및 보안 정책
+-- 3. 시스템 설정 테이블 보안 정책
 CREATE TABLE IF NOT EXISTS public.app_settings (
     key TEXT PRIMARY KEY,
     value TEXT,
@@ -83,7 +88,7 @@ CREATE POLICY "settings_read_policy" ON public.app_settings FOR SELECT TO authen
 CREATE POLICY "settings_admin_full_policy" ON public.app_settings FOR ALL TO authenticated 
 USING ( (SELECT role FROM public.profiles WHERE id = auth.uid()) IN ('admin', 'super_admin') );
 
--- 3. 최고 관리자 권한 부여
+-- 4. 최고 관리자 권한 부여
 UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.com';
 `;
 
@@ -220,7 +225,7 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
                         <Copy size={12} /> 코드 복사
                     </button>
                 </div>
-                <p className="text-[11px] text-slate-400 mb-2 italic">* DB의 tiers 테이블 값이 앱 설정과 다를 경우 아래 스크립트를 실행하여 강제 동기화하세요.</p>
+                <p className="text-[11px] text-slate-400 mb-2 italic">* DB 스키마가 변경되었습니다. 아래 스크립트를 실행하여 'order_id' 컬럼을 추가하세요.</p>
                 <pre className="text-[11px] font-mono text-slate-300 bg-black/40 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-800">{SQL_SOLUTION}</pre>
             </div>
 
@@ -268,6 +273,7 @@ UPDATE public.profiles SET role = 'super_admin' WHERE email = 'ungqum77@gmail.co
                     </div>
                 ) : activeTab === 'settings' ? (
                     <div className="p-8">
+                        {/* Settings content same as before */}
                         <div className="mb-6 pb-6 border-b border-slate-100">
                             <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-2"><Settings size={20} className="text-primary"/> 시스템 설정 관리</h3>
                             <p className="text-sm text-slate-500">가격, 할인율, 구독 링크 등 주요 설정을 실시간으로 반영합니다.</p>

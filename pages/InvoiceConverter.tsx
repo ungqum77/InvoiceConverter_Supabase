@@ -44,7 +44,7 @@ export const InvoiceConverter: React.FC = () => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isFolderSaving, setIsFolderSaving] = useState(false);
   
-  const [mapping, setMapping] = useState<ColumnMapping>({ sku: '', productName: '', orderer: '', receiver: '', option: '', quantity: '' });
+  const [mapping, setMapping] = useState<ColumnMapping>({ sku: '', productName: '', orderer: '', receiver: '', option: '', quantity: '', orderId: '' });
   
   const [matchedData, setMatchedData] = useState<MatchedOrder[]>([]);
   const [dbProducts, setDbProducts] = useState<Product[]>([]);
@@ -190,6 +190,9 @@ export const InvoiceConverter: React.FC = () => {
                
                // Resolve product name (Use Alt Name or Option Name if applicable)
                const { name: resolvedName } = getResolvedProductName(order);
+               
+               // Get Order ID if mapped
+               const orderIdValue = mapping.orderId ? String(order.originalData[mapping.orderId] || '').trim() : undefined;
 
                salesRecordsToSave.push({
                    user_id: user!.id,
@@ -197,6 +200,7 @@ export const InvoiceConverter: React.FC = () => {
                    product_name: resolvedName, // Save the actual name used on invoice
                    product_sku: product.sku,
                    supplier_name: product.supplierName,
+                   order_id: orderIdValue,
                    quantity: qty,
                    unit_sales_price: product.salesPrice || 0,
                    unit_purchase_cost: product.purchaseCost || 0,
@@ -481,6 +485,7 @@ export const InvoiceConverter: React.FC = () => {
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-700">수취인 열 (필수)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.receiver} onChange={e => setMapping({...mapping, receiver: e.target.value})}><option value="">열 선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 
                 {/* Optional Columns */}
+                <div><label className="block text-[11px] font-bold mb-1 text-slate-500">주문번호 열 (선택 - 중복 방지용)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.orderId} onChange={e => setMapping({...mapping, orderId: e.target.value})}><option value="">사용 안 함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-500">수량 열 (선택 - 정산 정확도 향상)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.quantity} onChange={e => setMapping({...mapping, quantity: e.target.value})}><option value="">1개로 가정</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-500">옵션 열 (선택 - 옵션명 대체용)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.option} onChange={e => setMapping({...mapping, option: e.target.value})}><option value="">사용 안 함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
             </div>
