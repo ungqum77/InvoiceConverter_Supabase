@@ -8,6 +8,35 @@ export interface Product {
   supplierName: string; // 발주처명 (Company Name)
   templateId: string; // Links to an InvoiceTemplate
   user_id?: string; // Supabase owner
+  
+  // Financial Fields (New)
+  purchaseCost?: number; // 매입가 (발주처에 줄 돈)
+  salesPrice?: number;   // 판매가 (고객에게 받은 돈)
+  shippingCost?: number; // 택배비용
+  otherCost?: number;    // 기타비용 (포장비 등)
+  marketFeeRate?: number; // 마켓 수수료율 (%)
+}
+
+export interface SalesRecord {
+  id: string;
+  user_id: string;
+  product_id?: string;
+  product_name: string;
+  product_sku: string;
+  supplier_name: string;
+  quantity: number;
+  
+  unit_sales_price: number;
+  unit_purchase_cost: number;
+  
+  total_sales_amount: number; // 매출액
+  total_purchase_amount: number; // 매입액 (정산금)
+  total_shipping_cost: number;
+  total_market_fee: number;
+  net_profit: number; // 순수익
+  
+  order_date: string;
+  created_at: string;
 }
 
 export interface InvoiceTemplate {
@@ -18,7 +47,6 @@ export interface InvoiceTemplate {
   user_id?: string; // Supabase owner
 }
 
-// Removed complicated mapping types as we strictly follow header name matching now
 export interface InvoiceRow {
   [key: string]: string | number | undefined;
 }
@@ -29,13 +57,16 @@ export interface MatchedOrder {
   product?: Product;
   status: 'matched' | 'unmatched';
   templateId?: string;
+  quantity: number; // 수량 추가
 }
 
 export interface ColumnMapping {
   sku: string;
-  orderer: string; // 주문자명 열
-  receiver: string; // 수취인명 열
-  option: string; // (New) 옵션 정보 열 - 제품명 대체용
+  productName: string; 
+  orderer: string; 
+  receiver: string; 
+  option: string; 
+  quantity: string; // (New) 수량 열
 }
 
 export interface Tier {
@@ -49,10 +80,10 @@ export interface UserProfile {
   id: string;
   email: string;
   tier_id: string;
-  role?: 'user' | 'admin' | 'super_admin'; // Updated roles
-  tier?: Tier; // Join result
-  subscription_start_date?: string; // ISO String
-  subscription_end_date?: string;   // ISO String
+  role?: 'user' | 'admin' | 'super_admin'; 
+  tier?: Tier; 
+  subscription_start_date?: string; 
+  subscription_end_date?: string;   
 }
 
 export interface ActivityLog {
@@ -61,5 +92,5 @@ export interface ActivityLog {
   action_type: string;
   description: string;
   created_at: string;
-  user_email?: string; // For display purposes in Admin Log
+  user_email?: string; 
 }

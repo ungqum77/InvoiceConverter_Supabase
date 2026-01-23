@@ -2,63 +2,32 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
-import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube, DollarSign, Calendar, FolderInput, HardDrive, FolderTree, ChevronRight } from 'lucide-react';
 import { Button } from '../components/Button';
-import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings } from '../services/dbService';
-import { InvoiceRow, MatchedOrder, Product, ColumnMapping } from '../types';
+import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords } from '../services/dbService';
+import { InvoiceRow, MatchedOrder, Product, ColumnMapping, SalesRecord } from '../types';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
-// [Critical Fix] Added '상품이름', '제품명', '제품' to recognize headers correctly
 const PRODUCT_NAME_HEADERS = ['상품명', '품목명', '내용물', '물품명', '상품이름', '제품명', '제품', 'Product Name', 'Item Name', 'Product', 'Item'];
 
-// Error 153 대응 및 직접 가기 링크가 포함된 가이드 컴포넌트
 const YouTubeEmbed = ({ url, title }: { url: string; title: string }) => {
     if (!url) return null;
-    
     let videoId = '';
     try {
         const urlObj = new URL(url);
-        if (urlObj.hostname === 'youtu.be') {
-            videoId = urlObj.pathname.slice(1);
-        } else if (urlObj.hostname.includes('youtube.com')) {
-            videoId = urlObj.searchParams.get('v') || urlObj.pathname.split('/').pop() || '';
-        }
-    } catch (e) {
-        const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-        const match = url.match(regExp);
-        videoId = (match && match[2].length === 11) ? match[2] : '';
-    }
-
+        if (urlObj.hostname === 'youtu.be') videoId = urlObj.pathname.slice(1);
+        else if (urlObj.hostname.includes('youtube.com')) videoId = urlObj.searchParams.get('v') || urlObj.pathname.split('/').pop() || '';
+    } catch (e) { videoId = ''; }
     if (!videoId) return null;
-
     return (
         <div className="mt-8 mb-4 max-w-xl mx-auto bg-slate-900 rounded-xl overflow-hidden shadow-lg border border-slate-700">
              <div className="flex items-center justify-between p-3 bg-slate-800 text-white border-b border-slate-700">
-                 <div className="flex items-center gap-2">
-                    <Youtube className="text-red-500" size={16}/>
-                    <span className="font-bold text-xs">도움말: {title}</span>
-                 </div>
-                 <a 
-                    href={url} 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="flex items-center gap-1.5 px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold transition-colors"
-                 >
-                    <ExternalLink size={10} /> YouTube에서 보기
-                 </a>
+                 <div className="flex items-center gap-2"><Youtube className="text-red-500" size={16}/><span className="font-bold text-xs">도움말: {title}</span></div>
+                 <a href={url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold transition-colors"><ExternalLink size={10} /> YouTube에서 보기</a>
              </div>
-             <div className="relative pb-[56.25%] h-0 bg-black">
-                <iframe
-                    className="absolute top-0 left-0 w-full h-full"
-                    src={`https://www.youtube.com/embed/${videoId}?rel=0`}
-                    title={title}
-                    frameBorder="0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                ></iframe>
-            </div>
+             <div className="relative pb-[56.25%] h-0 bg-black"><iframe className="absolute top-0 left-0 w-full h-full" src={`https://www.youtube.com/embed/${videoId}?rel=0`} title={title} frameBorder="0" allowFullScreen></iframe></div>
         </div>
     );
 };
@@ -73,17 +42,20 @@ export const InvoiceConverter: React.FC = () => {
   const [rawRows, setRawRows] = useState<InvoiceRow[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [mapping, setMapping] = useState<ColumnMapping>({ sku: '', orderer: '', receiver: '', option: '' });
+  const [isFolderSaving, setIsFolderSaving] = useState(false);
+  
+  const [mapping, setMapping] = useState<ColumnMapping>({ sku: '', productName: '', orderer: '', receiver: '', option: '', quantity: '' });
+  
   const [matchedData, setMatchedData] = useState<MatchedOrder[]>([]);
   const [dbProducts, setDbProducts] = useState<Product[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>({
-    silver_subscription_url: '',
-    gold_subscription_url: '',
-    youtube_tutorial_template: '',
-    youtube_tutorial_product: '',
-    youtube_tutorial_convert: ''
+    silver_subscription_url: '', gold_subscription_url: '', youtube_tutorial_template: '', youtube_tutorial_product: '', youtube_tutorial_convert: ''
   });
   
+  // Financial Summary
+  const [financialSummary, setFinancialSummary] = useState<Record<string, number>>({});
+  const [saveToCrm, setSaveToCrm] = useState(true);
+
   // Debug Tool State
   const [debugSku, setDebugSku] = useState('');
   const [debugResult, setDebugResult] = useState<any>(null);
@@ -93,14 +65,11 @@ export const InvoiceConverter: React.FC = () => {
   useEffect(() => { 
       if(user) {
           fetchAppSettings().then(setAppSettings);
-          fetchProducts().then(setDbProducts); // 미리 로드하여 디버깅에 사용
+          fetchProducts().then(setDbProducts); 
       }
   }, [user]);
 
-  // SKU 정규화 헬퍼 함수: 모든 공백 및 보이지 않는 문자 제거, 소문자 변환
-  const normalizeSku = (val: any) => {
-      return String(val || '').replace(/[\s\u200B-\u200D\uFEFF]/g, '').toLowerCase();
-  };
+  const normalizeSku = (val: any) => String(val || '').replace(/[\s\u200B-\u200D\uFEFF]/g, '').toLowerCase();
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -111,32 +80,20 @@ export const InvoiceConverter: React.FC = () => {
       const bstr = evt.target?.result;
       const wb = XLSX.read(bstr, { type: 'binary' });
       const ws = wb.Sheets[wb.SheetNames[0]];
-
-      // [V5 Critical Fix]
-      // 기존의 sheet_to_json(object 모드) 대신 header: 1 (Array 모드)를 사용하여
-      // 엑셀의 컬럼 순서(Index)를 기반으로 데이터를 파싱합니다.
       const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' }) as any[][];
 
       if (data.length > 0) {
-        // 1. 헤더 처리 및 고유 키 생성
         const headerRow = data[0];
         const uniqueHeaders: string[] = [];
         const counts: Record<string, number> = {};
 
         headerRow.forEach((h: any) => {
             let key = (h !== undefined && h !== null) ? String(h).trim() : '';
-            if (key === '') key = 'UNKNOWN'; // 빈 헤더 이름 처리
-
-            if (Object.prototype.hasOwnProperty.call(counts, key)) {
-                uniqueHeaders.push(`${key}_${counts[key]}`);
-                counts[key]++;
-            } else {
-                uniqueHeaders.push(key);
-                counts[key] = 1;
-            }
+            if (key === '') key = 'UNKNOWN';
+            if (Object.prototype.hasOwnProperty.call(counts, key)) { uniqueHeaders.push(`${key}_${counts[key]}`); counts[key]++; }
+            else { uniqueHeaders.push(key); counts[key] = 1; }
         });
 
-        // 2. 데이터 행 생성 (헤더 인덱스와 1:1 매칭)
         const rows = data.slice(1).map((rowArray) => {
             const rowObj: InvoiceRow = {};
             uniqueHeaders.forEach((header, index) => {
@@ -146,9 +103,7 @@ export const InvoiceConverter: React.FC = () => {
             return rowObj;
         });
 
-        // 3. 완전히 비어있는 행 제거
         const validRows = rows.filter(r => Object.values(r).some(v => String(v).trim() !== ''));
-
         setHeaders(uniqueHeaders);
         setRawRows(validRows);
         setStep(2);
@@ -158,176 +113,301 @@ export const InvoiceConverter: React.FC = () => {
   };
 
   const processMatching = async () => {
-    if (!mapping.sku || !mapping.orderer || !mapping.receiver) return;
+    if (!mapping.sku || !mapping.productName || !mapping.orderer || !mapping.receiver) return;
     setIsProcessing(true);
     try {
         const products = dbProducts.length > 0 ? dbProducts : await fetchProducts();
+        const productMap = new Map<string, Product>(products.map(p => [normalizeSku(p.sku), p]));
         
-        // [Logic Update] DB SKU 정규화: 공백/특수문자 모두 제거하여 매칭 확률 극대화
-        // P-001 과 P001,  53065 960858 과 53065960858 등을 같게 처리
-        const productMap = new Map(products.map(p => [normalizeSku(p.sku), p]));
-        
+        const summary: Record<string, number> = {};
+
         const results: MatchedOrder[] = rawRows.map((row, idx) => {
-            // [Logic Update] 엑셀 SKU 정규화
             const cellValue = normalizeSku(row[mapping.sku]);
             const matchedProduct = productMap.get(cellValue);
+            
+            // Quantity Parse
+            let qty = 1;
+            if (mapping.quantity && row[mapping.quantity]) {
+                const q = parseInt(String(row[mapping.quantity]).replace(/[^0-9]/g, ''));
+                if (!isNaN(q) && q > 0) qty = q;
+            }
+
+            // Financial Summary Calculation
+            if (matchedProduct) {
+                const sup = matchedProduct.supplierName;
+                const cost = (matchedProduct.purchaseCost || 0) * qty;
+                summary[sup] = (summary[sup] || 0) + cost;
+            }
+
             return {
                 id: `ROW-${idx}`,
                 originalData: row,
                 product: matchedProduct,
                 status: matchedProduct ? 'matched' : 'unmatched',
-                templateId: matchedProduct?.templateId
+                templateId: matchedProduct?.templateId,
+                quantity: qty
             };
         });
         setMatchedData(results);
+        setFinancialSummary(summary);
         setStep(3);
     } catch (e) { alert("처리 오류"); } finally { setIsProcessing(false); }
   };
 
-  // Helper function to calculate final name (Used in Step 3 Debug view)
   const getResolvedProductName = (order: MatchedOrder) => {
     if (order.status !== 'matched' || !order.product) return { name: '', source: 'none' };
-    
     const product = order.product;
     const canUseAlt = product.useAdditionalName === true;
     const hasAltValue = product.additionalName && String(product.additionalName).trim().length > 0;
 
-    if (canUseAlt && hasAltValue) {
-        return { name: String(product.additionalName).trim(), source: 'alt_name' };
-    } else if (mapping.option && order.originalData[mapping.option]) {
+    if (canUseAlt && hasAltValue) { return { name: String(product.additionalName).trim(), source: 'alt_name' }; } 
+    else if (mapping.option && order.originalData[mapping.option]) {
         const optVal = String(order.originalData[mapping.option]).trim();
         if (optVal) return { name: optVal, source: 'option_col' };
     }
     return { name: product.name, source: 'db_name' };
   };
 
-  const handleDebugSearch = () => {
-    if (!debugSku) return;
-    const normalizedInput = normalizeSku(debugSku);
-    const found = dbProducts.find(p => normalizeSku(p.sku) === normalizedInput);
-    
-    if (found) {
-        const canUseAlt = found.useAdditionalName === true;
-        const hasAltValue = found.additionalName && String(found.additionalName).trim().length > 0;
-        let finalDecision = '기본 제품명 사용';
-        let finalValue = found.name;
-
-        if (canUseAlt && hasAltValue) {
-            finalDecision = '대체 제품명 사용';
-            finalValue = found.additionalName || '';
-        }
-
-        setDebugResult({
-            status: 'found',
-            sku: found.sku,
-            normalizedSku: normalizedInput,
-            supplier: found.supplierName,
-            name: found.name,
-            altName: found.additionalName,
-            useAlt: found.useAdditionalName,
-            finalDecision,
-            finalValue
-        });
-    } else {
-        setDebugResult({
-            status: 'not_found',
-            sku: debugSku,
-            normalizedSku: normalizedInput
-        });
-    }
-  };
-
-  const downloadExcel = async () => {
-    setIsDownloading(true);
-    try {
+  const getProcessingData = async () => {
       const templates = await fetchTemplates();
       const templateMap = new Map(templates.map(t => [t.id, t]));
-      const zip = new JSZip();
+      
       const col1 = headers[0];
       const col2 = headers[1];
-
-      // 파일명 생성 조건
       const isPlanMode = col1 === '플랜' && col2 === '회차';
 
-      interface FileGroup {
-        fileName: string;
-        templateId: string;
-        orders: MatchedOrder[];
-      }
-      
+      interface FileGroup { fileName: string; templateId: string; orders: MatchedOrder[]; supplier: string; }
       const fileGroups = new Map<string, FileGroup>();
+      const salesRecordsToSave: Omit<SalesRecord, 'id' | 'created_at'>[] = [];
+
       matchedData.forEach(order => {
-        if (order.status === 'matched' && order.product?.templateId) {
-           let baseName = '';
-           if (isPlanMode) {
-               baseName = `${String(order.originalData[col1] || 'Unknown')}_${String(order.originalData[col2] || 'Unknown')}_${order.product.supplierName}`;
-           } else {
-               baseName = order.product.supplierName;
+        const product = order.product as Product | undefined;
+        if (order.status === 'matched' && product && product.templateId) {
+           // CRM Data
+           if (saveToCrm) {
+               const qty = order.quantity;
+               const salesAmt = (product.salesPrice || 0) * qty;
+               const purchAmt = (product.purchaseCost || 0) * qty;
+               const shipCost = (product.shippingCost || 0) * qty;
+               const fee = Math.round(salesAmt * ((product.marketFeeRate || 0) / 100));
+               const profit = salesAmt - purchAmt - shipCost - (product.otherCost || 0) * qty - fee;
+
+               salesRecordsToSave.push({
+                   user_id: user!.id,
+                   product_id: product.id,
+                   product_name: product.name,
+                   product_sku: product.sku,
+                   supplier_name: product.supplierName,
+                   quantity: qty,
+                   unit_sales_price: product.salesPrice || 0,
+                   unit_purchase_cost: product.purchaseCost || 0,
+                   total_sales_amount: salesAmt,
+                   total_purchase_amount: purchAmt,
+                   total_shipping_cost: shipCost,
+                   total_market_fee: fee,
+                   net_profit: profit,
+                   order_date: new Date().toISOString()
+               });
            }
 
+           // File Grouping
+           let baseName = '';
+           if (isPlanMode) baseName = `${String(order.originalData[col1] || 'Unknown')}_${String(order.originalData[col2] || 'Unknown')}_${product.supplierName}`;
+           else baseName = product.supplierName;
+
            const safeName = baseName.replace(/[\\/:*?"<>|]/g, '-');
-           const key = `${order.product.templateId}:::${safeName}`;
+           const key = `${product.templateId}:::${safeName}`;
            
            if (!fileGroups.has(key)) {
-             fileGroups.set(key, { fileName: safeName, templateId: order.product.templateId!, orders: [] });
+             fileGroups.set(key, { fileName: safeName, templateId: product.templateId, orders: [], supplier: product.supplierName });
            }
-           
            fileGroups.get(key)?.orders.push(order);
         }
       });
+      return { fileGroups, templateMap, salesRecordsToSave };
+  };
+
+  const saveCrmDataOnly = async (records: any[]) => {
+      if (saveToCrm && records.length > 0) {
+          await saveSalesRecords(records);
+          console.log("CRM Data Saved");
+      }
+  };
+
+  // --- 1. ZIP DOWNLOAD (Fallback) ---
+  const downloadExcel = async () => {
+    setIsDownloading(true);
+    try {
+      const { fileGroups, templateMap, salesRecordsToSave } = await getProcessingData();
+      const zip = new JSZip();
+
+      // Folder Structure Generation
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const date = String(now.getDate()).padStart(2, '0');
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const dayName = days[now.getDay()];
+      
+      const folderPath = `${year}/${month}/${date}_${dayName}`;
 
       fileGroups.forEach(group => {
          const tpl = templateMap.get(group.templateId);
          if (!tpl) return;
-         
          const finalHeaders = (tpl.outputHeaders && tpl.outputHeaders.length > 0) ? tpl.outputHeaders : tpl.headers;
 
          const dataRows = group.orders.map((o: any) => {
             const rowData: any[] = [];
-            const { name: pName } = getResolvedProductName(o); // Use same logic helper
-
-            // 받는 사람/보내는 사람 다를 경우 표기 (유지)
+            const { name: pName } = getResolvedProductName(o);
             const ord = String(o.originalData[mapping.orderer] || '').trim();
             const rev = String(o.originalData[mapping.receiver] || '').trim();
             let finalName = pName;
+            
+            if (o.quantity > 1) finalName += ` (${o.quantity}개)`;
             if (ord !== rev) finalName += ` 보내는 사람_${ord}`;
             
             tpl.headers.forEach((h: string) => {
-               // [Logic V5] 템플릿의 헤더가 '상품명' 관련 단어를 포함하면 우리가 계산한 finalName을 집어넣음
-               if (PRODUCT_NAME_HEADERS.some(ph => h.includes(ph))) {
-                   rowData.push(finalName);
-               } else {
-                   // 아니면 원본 데이터의 해당 컬럼 값을 넣음 (없으면 공란)
-                   rowData.push(o.originalData[h] || '');
-               }
+               const isUserSelectedProductCol = mapping.productName && h === mapping.productName;
+               const isAutoDetectedProductCol = PRODUCT_NAME_HEADERS.some(ph => h.includes(ph));
+               if (isUserSelectedProductCol || isAutoDetectedProductCol) rowData.push(finalName);
+               else rowData.push(o.originalData[h] || '');
             });
             return rowData;
          });
 
          const finalSheetData = [finalHeaders, ...dataRows];
-         
          const wb = XLSX.utils.book_new();
          const ws = XLSX.utils.aoa_to_sheet(finalSheetData); 
-         
          XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-         zip.file(`${group.fileName}.xlsx`, XLSX.write(wb, { bookType: 'xlsx', type: 'array' }));
+         
+         const fullPath = `${folderPath}/${group.supplier}/${group.fileName}.xlsx`;
+         zip.file(fullPath, XLSX.write(wb, { bookType: 'xlsx', type: 'array' }));
       });
+
+      // Add Settlement Summary
+      const summaryData = Object.entries(financialSummary).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
+      const summaryWs = XLSX.utils.json_to_sheet(summaryData);
+      const summaryWb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(summaryWb, summaryWs, "정산요약");
+      zip.file(`${folderPath}/00_정산요약_${date}.xlsx`, XLSX.write(summaryWb, { bookType: 'xlsx', type: 'array' }));
+
+      // Save CRM
+      await saveCrmDataOnly(salesRecordsToSave);
 
       const content = await zip.generateAsync({ type: "blob" });
       const url = window.URL.createObjectURL(content);
-      const a = document.createElement('a'); a.href = url; a.download = "송장변환.zip"; a.click();
-    } catch (e) { alert("다운로드 오류"); } finally { setIsDownloading(false); }
+      const a = document.createElement('a'); a.href = url; a.download = `송장변환_${year}${month}${date}.zip`; a.click();
+    } catch (e: any) { alert("다운로드/저장 오류: " + e.message); } finally { setIsDownloading(false); }
   };
 
-  const [templateNames, setTemplateNames] = useState<Map<string, string>>(new Map());
-  useEffect(() => { if(user) fetchTemplates().then(ts => setTemplateNames(new Map(ts.map(t => [t.id, t.name])))); }, [user]);
+  // --- 2. DIRECT FOLDER SAVE (File System Access API) ---
+  const handleDirectFolderSave = async () => {
+      // Feature Check
+      if (!('showDirectoryPicker' in window)) {
+          alert("이 브라우저는 폴더 직접 저장을 지원하지 않습니다. (Chrome, Edge, Opera 지원)\n'ZIP 다운로드' 기능을 이용해주세요.");
+          return;
+      }
 
-  const stats = matchedData.reduce((acc, curr) => {
-    const name = curr.templateId ? (templateNames.get(curr.templateId) || 'Unknown') : '미확인';
-    acc[name] = (acc[name] || 0) + 1;
-    return acc;
-  }, {} as any);
-  const chartData = Object.keys(stats).map(name => ({ name, value: stats[name] }));
+      setIsFolderSaving(true);
+      try {
+          // 1. User picks Root Folder
+          const rootHandle = await (window as any).showDirectoryPicker();
+          if (!rootHandle) return;
+
+          const { fileGroups, templateMap, salesRecordsToSave } = await getProcessingData();
+
+          // 2. Date Structure
+          const now = new Date();
+          const year = String(now.getFullYear());
+          const month = String(now.getMonth() + 1).padStart(2, '0');
+          const date = String(now.getDate()).padStart(2, '0');
+          const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          const dayName = days[now.getDay()];
+          const dateDirName = `${date}_${dayName}`;
+
+          // Create Directories: Root -> Year -> Month -> Date
+          const yearDir = await rootHandle.getDirectoryHandle(year, { create: true });
+          const monthDir = await yearDir.getDirectoryHandle(month, { create: true });
+          const targetDir = await monthDir.getDirectoryHandle(dateDirName, { create: true });
+
+          // 3. Write Excel Files
+          const writeFile = async (dirHandle: any, filename: string, content: any) => {
+              const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+              const writable = await fileHandle.createWritable();
+              await writable.write(content);
+              await writable.close();
+          };
+
+          for (const [key, group] of fileGroups) {
+              const tpl = templateMap.get(group.templateId);
+              if (!tpl) continue;
+              
+              const supplierDir = await targetDir.getDirectoryHandle(group.supplier, { create: true });
+
+              // Build Excel
+              const finalHeaders = (tpl.outputHeaders && tpl.outputHeaders.length > 0) ? tpl.outputHeaders : tpl.headers;
+              const dataRows = group.orders.map((o: any) => {
+                const rowData: any[] = [];
+                const { name: pName } = getResolvedProductName(o);
+                const ord = String(o.originalData[mapping.orderer] || '').trim();
+                const rev = String(o.originalData[mapping.receiver] || '').trim();
+                let finalName = pName;
+                if (o.quantity > 1) finalName += ` (${o.quantity}개)`;
+                if (ord !== rev) finalName += ` 보내는 사람_${ord}`;
+                
+                tpl.headers.forEach((h: string) => {
+                   const isUserSelectedProductCol = mapping.productName && h === mapping.productName;
+                   const isAutoDetectedProductCol = PRODUCT_NAME_HEADERS.some(ph => h.includes(ph));
+                   if (isUserSelectedProductCol || isAutoDetectedProductCol) rowData.push(finalName);
+                   else rowData.push(o.originalData[h] || '');
+                });
+                return rowData;
+              });
+
+              const finalSheetData = [finalHeaders, ...dataRows];
+              const wb = XLSX.utils.book_new();
+              const ws = XLSX.utils.aoa_to_sheet(finalSheetData); 
+              XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+              const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+              
+              await writeFile(supplierDir, `${group.fileName}.xlsx`, excelBuffer);
+          }
+
+          // 4. Write Summary
+          const summaryData = Object.entries(financialSummary).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
+          const summaryWs = XLSX.utils.json_to_sheet(summaryData);
+          const summaryWb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(summaryWb, summaryWs, "정산요약");
+          const summaryBuffer = XLSX.write(summaryWb, { bookType: 'xlsx', type: 'array' });
+          
+          await writeFile(targetDir, `00_정산요약_${date}.xlsx`, summaryBuffer);
+
+          // 5. Save CRM
+          await saveCrmDataOnly(salesRecordsToSave);
+
+          alert("저장이 완료되었습니다! 선택하신 폴더를 확인해주세요.");
+
+      } catch (e: any) {
+          if (e.name !== 'AbortError') { // User cancelled picker
+              alert("폴더 저장 중 오류 발생: " + e.message);
+          }
+      } finally {
+          setIsFolderSaving(false);
+      }
+  };
+  
+  // -- Helper to get preview structure --
+  const getPreviewStructure = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const date = String(now.getDate()).padStart(2, '0');
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayName = days[now.getDay()];
+    return `${year} > ${month} > ${date}_${dayName} > [발주처명]`;
+  };
+
+  const handleDebugSearch = () => { /* ... */ }; 
 
   if (!user) return <div className="p-20 text-center"><Lock className="mx-auto mb-4" /><Button onClick={() => navigate('/auth')}>로그인 필요</Button></div>;
 
@@ -340,13 +420,9 @@ export const InvoiceConverter: React.FC = () => {
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden max-w-2xl mx-auto">
         {step === 1 && (
           <div className="flex flex-col items-center justify-center text-center py-6 px-6">
-            <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mb-3 text-primary">
-              <UploadCloud size={24} />
-            </div>
+            <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center mb-3 text-primary"><UploadCloud size={24} /></div>
             <h2 className="text-lg font-bold text-slate-900 mb-1">주문 리스트 업로드</h2>
-            <p className="text-slate-500 text-[11px] mb-4 leading-relaxed">
-              마켓 엑셀 파일을 업로드하면 발주처별 송장을 자동 생성합니다.
-            </p>
+            <p className="text-slate-500 text-[11px] mb-4 leading-relaxed">마켓 엑셀 파일을 업로드하면 발주처별 송장을 자동 생성합니다.</p>
             <input type="file" accept=".xlsx, .xls" className="hidden" ref={fileInputRef} onChange={handleFileUpload}/>
             <Button size="sm" onClick={() => fileInputRef.current?.click()} className="px-8">파일 선택</Button>
           </div>
@@ -355,163 +431,88 @@ export const InvoiceConverter: React.FC = () => {
         {step === 2 && (
           <div className="p-6 space-y-5">
             <div className="p-3 bg-slate-50 rounded-lg border flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                    <FileSpreadsheet className="text-green-600" size={18} />
-                    <span className="text-xs font-medium truncate max-w-[200px]">{fileName} ({rawRows.length}건)</span>
-                </div>
+                <div className="flex items-center gap-2"><FileSpreadsheet className="text-green-600" size={18} /><span className="text-xs font-medium truncate max-w-[200px]">{fileName} ({rawRows.length}건)</span></div>
                 <button onClick={() => setStep(1)} className="text-slate-400 hover:text-red-500 transition-colors"><X size={18}/></button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div><label className="block text-[11px] font-bold mb-1 text-slate-700">SKU 열</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.sku} onChange={e => setMapping({...mapping, sku: e.target.value})}><option value="">열 선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
-                <div><label className="block text-[11px] font-bold mb-1 text-slate-700">주문자 열</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.orderer} onChange={e => setMapping({...mapping, orderer: e.target.value})}><option value="">열 선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
-                <div><label className="block text-[11px] font-bold mb-1 text-slate-700">수취인 열</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.receiver} onChange={e => setMapping({...mapping, receiver: e.target.value})}><option value="">열 선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
-                <div><label className="block text-[11px] font-bold mb-1 text-slate-700">옵션 열 (선택)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.option} onChange={e => setMapping({...mapping, option: e.target.value})}><option value="">사용 안 함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+                <div><label className="block text-[11px] font-bold mb-1 text-slate-700">SKU 열 (필수)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.sku} onChange={e => setMapping({...mapping, sku: e.target.value})}><option value="">열 선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+                <div><label className="block text-[11px] font-bold mb-1 text-primary">제품명 열 (필수)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary border-primary bg-blue-50/50" value={mapping.productName} onChange={e => setMapping({...mapping, productName: e.target.value})}><option value="">열 선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+                <div><label className="block text-[11px] font-bold mb-1 text-slate-700">주문자 열 (필수)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.orderer} onChange={e => setMapping({...mapping, orderer: e.target.value})}><option value="">열 선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+                <div><label className="block text-[11px] font-bold mb-1 text-slate-700">수취인 열 (필수)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.receiver} onChange={e => setMapping({...mapping, receiver: e.target.value})}><option value="">열 선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+                
+                {/* Optional Columns */}
+                <div><label className="block text-[11px] font-bold mb-1 text-slate-500">수량 열 (선택 - 정산 정확도 향상)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.quantity} onChange={e => setMapping({...mapping, quantity: e.target.value})}><option value="">1개로 가정</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+                <div><label className="block text-[11px] font-bold mb-1 text-slate-500">옵션 열 (선택 - 옵션명 대체용)</label><select className="w-full rounded border-slate-300 text-xs py-1.5 focus:ring-primary focus:border-primary" value={mapping.option} onChange={e => setMapping({...mapping, option: e.target.value})}><option value="">사용 안 함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
             </div>
-            <div className="flex justify-end pt-3 border-t border-slate-100"><Button size="sm" disabled={!mapping.sku || !mapping.orderer} onClick={processMatching}>변환 시작</Button></div>
+            <div className="flex justify-end pt-3 border-t border-slate-100"><Button size="sm" disabled={!mapping.sku || !mapping.productName || !mapping.orderer || !mapping.receiver} onClick={processMatching}>변환 시작</Button></div>
           </div>
         )}
 
         {step === 3 && (
           <div className="p-6 space-y-6">
-            <div className="grid grid-cols-1 gap-6">
-                <div className="flex flex-col justify-center items-center gap-4 bg-slate-50 rounded-xl border p-6 border-dashed border-slate-300">
-                    <div className="w-10 h-10 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
-                        <CheckCircle2 size={20} />
-                    </div>
-                    <div className="text-center">
-                        <p className="text-sm font-bold text-slate-900">데이터 처리 완료</p>
-                        <p className="text-[11px] text-slate-500 mt-1">총 {matchedData.filter(d => d.status === 'matched').length}건 / 전체 {matchedData.length}건 변환 성공</p>
-                    </div>
-                    <Button onClick={downloadExcel} icon={<Download size={16}/>} isLoading={isDownloading}>결과 파일 다운로드</Button>
+            <div className="bg-slate-50 rounded-xl border p-6 border-slate-200">
+                <div className="flex flex-col items-center text-center mb-6">
+                    <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-2"><CheckCircle2 size={24} /></div>
+                    <h3 className="text-lg font-bold text-slate-900">변환 완료</h3>
+                    <p className="text-xs text-slate-500">총 {matchedData.filter(d => d.status === 'matched').length}건 변환 성공</p>
                 </div>
-                
-                {/* Manual SKU Lookup Tool */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                    <div className="p-3 bg-indigo-50 border-b border-indigo-100 flex items-center gap-2">
-                        <TestTube size={16} className="text-indigo-600"/>
-                        <h4 className="text-xs font-bold text-indigo-900">SKU 직접 조회 (DB 데이터 검증)</h4>
-                    </div>
-                    <div className="p-4 bg-indigo-50/30">
-                        <div className="flex gap-2 mb-3">
-                            <input 
-                                type="text" 
-                                placeholder="확인할 SKU 입력 (예: 53065960858)" 
-                                className="flex-1 text-xs border border-slate-300 rounded px-3 py-2"
-                                value={debugSku}
-                                onChange={e => setDebugSku(e.target.value)}
-                                onKeyDown={e => e.key === 'Enter' && handleDebugSearch()}
-                            />
-                            <Button size="sm" onClick={handleDebugSearch} disabled={!debugSku}>조회</Button>
-                        </div>
-                        
-                        {debugResult && (
-                            <div className={`text-[11px] p-3 rounded border ${debugResult.status === 'found' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                                {debugResult.status === 'found' ? (
-                                    <div className="space-y-1">
-                                        <div className="font-bold text-green-700 flex items-center gap-1"><CheckCircle2 size={12}/> 제품 찾음</div>
-                                        <div><span className="text-slate-500">DB 저장 SKU:</span> <strong>{debugResult.sku}</strong> (정규화: {debugResult.normalizedSku})</div>
-                                        <div><span className="text-slate-500">발주처:</span> {debugResult.supplier}</div>
-                                        <div><span className="text-slate-500">기본 제품명:</span> {debugResult.name}</div>
-                                        <div><span className="text-slate-500">대체 제품명:</span> {debugResult.altName || '(없음)'}</div>
-                                        <div><span className="text-slate-500">대체명 사용설정:</span> <span className={debugResult.useAlt ? 'text-blue-600 font-bold' : 'text-slate-400'}>{debugResult.useAlt ? 'TRUE (사용함)' : 'FALSE (사용안함)'}</span></div>
-                                        <div className="mt-2 pt-2 border-t border-green-200 text-green-800">
-                                            <span className="font-bold">➔ 최종 로직 결과:</span> {debugResult.finalDecision} <br/>
-                                            <span className="font-bold text-lg bg-white/50 px-1 rounded">{debugResult.finalValue}</span>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="text-red-600 font-bold">
-                                        ❌ DB에서 제품을 찾을 수 없습니다.<br/>
-                                        <span className="font-normal text-xs text-red-500">입력값: {debugResult.sku} (정규화: {debugResult.normalizedSku})</span>
-                                    </div>
-                                )}
+
+                {/* Settlement Message */}
+                <div className="bg-white rounded-lg border border-slate-200 p-4 mb-6 shadow-sm">
+                    <h4 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2"><DollarSign size={16}/> 금일 발주처 정산 요약</h4>
+                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                        {Object.keys(financialSummary).length > 0 ? Object.entries(financialSummary).map(([sup, amt]) => (
+                            <div key={sup} className="flex justify-between text-xs border-b border-slate-50 pb-1 last:border-0">
+                                <span className="text-slate-600">{sup}</span>
+                                <span className="font-bold text-red-500">{amt.toLocaleString()} 원 지급 필요</span>
                             </div>
-                        )}
+                        )) : <div className="text-xs text-slate-400">정산 데이터 없음 (매입가 미설정 등)</div>}
                     </div>
                 </div>
 
-                {/* Debugging Table Section */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                    <div className="p-3 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
-                        <ListFilter size={16} className="text-slate-500"/>
-                        <h4 className="text-xs font-bold text-slate-700">매칭 상세 리스트 (전체)</h4>
-                    </div>
-                    <div className="overflow-auto max-h-[400px]">
-                        <table className="w-full text-left text-[10px]">
-                            <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
-                                <tr>
-                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">입력 SKU (Excel)</th>
-                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">매칭된 제품 (DB)</th>
-                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">발주처</th>
-                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">기본 제품명</th>
-                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">대체 제품명</th>
-                                    <th className="px-3 py-2 font-bold text-slate-500 whitespace-nowrap">사용여부</th>
-                                    <th className="px-3 py-2 font-bold text-primary whitespace-nowrap">최종 결정된 이름</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {matchedData.map((row) => {
-                                    const { name: finalName, source } = getResolvedProductName(row);
-                                    const rawSku = String(row.originalData[mapping.sku] || '');
-                                    const isMatched = row.status === 'matched';
-                                    
-                                    return (
-                                        <tr key={row.id} className={`hover:bg-slate-50 ${!isMatched ? 'bg-red-50/30' : ''}`}>
-                                            <td className="px-3 py-2 font-mono text-slate-600 border-r border-slate-100 max-w-[120px] truncate" title={rawSku}>
-                                                {rawSku || <span className="text-red-300">(비어있음)</span>}
-                                            </td>
-                                            <td className="px-3 py-2 font-medium">
-                                                {isMatched ? (
-                                                    <span className="text-green-600 flex items-center gap-1">
-                                                        <CheckCircle2 size={10}/> {row.product?.sku}
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-red-400 text-[9px]">매칭 실패</span>
-                                                )}
-                                            </td>
-                                            <td className="px-3 py-2 text-slate-500 truncate max-w-[100px]">{row.product?.supplierName || '-'}</td>
-                                            <td className="px-3 py-2 text-slate-500 truncate max-w-[150px]" title={row.product?.name}>{row.product?.name || '-'}</td>
-                                            <td className="px-3 py-2 text-slate-500 truncate max-w-[150px]" title={row.product?.additionalName}>{row.product?.additionalName || '-'}</td>
-                                            <td className="px-3 py-2 text-center">
-                                                {row.product?.useAdditionalName ? (
-                                                    <span className="text-green-600 font-bold">TRUE</span>
-                                                ) : (
-                                                    <span className="text-slate-300">FALSE</span>
-                                                )}
-                                            </td>
-                                            <td className="px-3 py-2 font-bold border-l border-slate-100 truncate max-w-[200px]" title={finalName}>
-                                                {finalName ? (
-                                                    <span className={`${
-                                                        source === 'alt_name' ? 'text-green-600 bg-green-50 px-1.5 py-0.5 rounded' : 
-                                                        source === 'option_col' ? 'text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded' : 
-                                                        'text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded'
-                                                    }`}>
-                                                        {finalName}
-                                                    </span>
-                                                ) : '-'}
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
+                <div className="flex items-center justify-between bg-blue-50 p-3 rounded-lg mb-4">
+                    <div className="flex items-center gap-2">
+                        <input type="checkbox" id="saveCrm" checked={saveToCrm} onChange={e => setSaveToCrm(e.target.checked)} className="rounded text-primary focus:ring-primary"/>
+                        <label htmlFor="saveCrm" className="text-xs font-bold text-blue-800 cursor-pointer">매출 내역을 CRM(통계)에 저장하기</label>
                     </div>
                 </div>
 
-                <div className="bg-slate-50 p-4 rounded-xl border h-48">
-                    <h4 className="text-[10px] font-bold text-slate-500 mb-2 uppercase">분류 현황</h4>
-                    <ResponsiveContainer width="100%" height="80%">
-                        <BarChart data={chartData} layout="vertical"><XAxis type="number" hide/><YAxis dataKey="name" type="category" width={60} tick={{fontSize: 9}}/><Bar dataKey="value" fill="#135bec" barSize={15}/></BarChart>
-                    </ResponsiveContainer>
+                {/* Visual Preview of Folder Structure */}
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mb-4 text-xs text-slate-600">
+                    <div className="flex items-center gap-1 font-bold mb-2 text-indigo-600">
+                        <FolderTree size={14}/> 폴더 자동 생성 구조 미리보기
+                    </div>
+                    <div className="flex items-center gap-1.5 bg-white p-2 rounded border border-slate-100 text-slate-500">
+                        <FolderInput size={14} className="text-slate-400"/>
+                        <span className="font-bold text-slate-800">[선택한 폴더]</span>
+                        <ChevronRight size={12} />
+                        <span>{new Date().getFullYear()}</span>
+                        <ChevronRight size={12} />
+                        <span>{String(new Date().getMonth()+1).padStart(2,'0')}</span>
+                        <ChevronRight size={12} />
+                        <span>{String(new Date().getDate()).padStart(2,'0')}_{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date().getDay()]}</span>
+                        <ChevronRight size={12} />
+                        <span className="italic text-slate-400">발주처명...</span>
+                    </div>
                 </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <Button onClick={downloadExcel} icon={<Download size={16}/>} variant="secondary" isLoading={isDownloading} className="w-full">
+                        ZIP 다운로드
+                    </Button>
+                    <Button onClick={handleDirectFolderSave} icon={<HardDrive size={16}/>} isLoading={isFolderSaving} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white border-transparent">
+                        폴더 선택 및 자동 저장
+                    </Button>
+                </div>
+                <p className="text-[10px] text-center text-slate-400 mt-2">* '폴더 자동 저장'은 Chrome, Edge 브라우저에서 지원됩니다.</p>
             </div>
-            <div className="flex justify-start">
-                <Button variant="ghost" size="sm" onClick={() => setStep(1)}>처음으로</Button>
+            
+            <div className="flex justify-center">
+                <Button variant="ghost" size="sm" onClick={() => setStep(1)}>처음으로 돌아가기</Button>
             </div>
           </div>
         )}
       </div>
-
       <YouTubeEmbed url={appSettings.youtube_tutorial_convert} title="송장 변환 가이드" />
     </div>
   );

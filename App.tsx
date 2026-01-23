@@ -1,10 +1,10 @@
-
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Home } from './pages/Home';
 import { ProductManagement } from './pages/ProductManagement';
 import { InvoiceConverter } from './pages/InvoiceConverter';
+import { SalesCRM } from './pages/SalesCRM';
 import { Auth } from './pages/Auth';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { InvoiceMatcher } from './pages/InvoiceMatcher';
@@ -22,9 +22,6 @@ interface ErrorBoundaryState {
   error: Error | null; 
 }
 
-/**
- * captures errors in the react component tree.
- */
 class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   public state: ErrorBoundaryState = {
     hasError: false,
@@ -84,6 +81,7 @@ const App: React.FC = () => {
               <Route path="/auth" element={<Auth />} />
               <Route path="/products" element={<ProductManagement />} />
               <Route path="/convert" element={<InvoiceConverter />} />
+              <Route path="/crm" element={<SalesCRM />} />
               <Route path="/admin" element={<AdminDashboard />} />
               <Route path="/admin/match" element={<InvoiceMatcher />} />
             </Routes>

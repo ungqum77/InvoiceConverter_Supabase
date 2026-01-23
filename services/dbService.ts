@@ -1,5 +1,6 @@
+
 import { supabase } from './supabase';
-import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog } from '../types';
+import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord } from '../types';
 
 // Helper to handle Supabase "snake_case" to "camelCase" mapping
 const mapProductFromDB = (data: any): Product => ({
@@ -11,17 +12,23 @@ const mapProductFromDB = (data: any): Product => ({
   supplierName: data.supplier_name,
   templateId: data.template_id,
   user_id: data.user_id,
+  // Financial Mapping
+  purchaseCost: data.purchase_cost || 0,
+  salesPrice: data.sales_price || 0,
+  shippingCost: data.shipping_cost || 0,
+  otherCost: data.other_cost || 0,
+  marketFeeRate: data.market_fee_rate || 0,
 });
 
 const mapTemplateFromDB = (data: any): InvoiceTemplate => ({
   id: data.id,
   name: data.name,
   headers: data.headers,
-  outputHeaders: data.output_headers || data.headers, // Fallback to headers if output_headers is null
+  outputHeaders: data.output_headers || data.headers, 
   user_id: data.user_id,
 });
 
-// Tier Definitions - 무료 등급 수치 조정 (2/1)
+// Tier Definitions
 export const DEFAULT_TIERS: Record<string, Tier> = {
   free: { id: 'free', name: '무료 회원', max_products: 2, max_templates: 1 },
   silver: { id: 'silver', name: '실버 회원', max_products: 8, max_templates: 3 },
@@ -42,15 +49,13 @@ export const fetchAllTiers = async (): Promise<Tier[]> => {
     return Object.values(DEFAULT_TIERS);
 };
 
-// --- App Settings (URLs & Prices) ---
+// ... (AppSettings functions remain same, omitted for brevity but assumed present) ...
 export interface AppSettings {
-    // URLs
     silver_subscription_url: string;
     gold_subscription_url: string;
     youtube_tutorial_template: string;
     youtube_tutorial_product: string;
     youtube_tutorial_convert: string;
-    // Prices (Stored as string in DB, parsed in UI)
     price_silver_original: string;
     price_silver_sale: string;
     price_gold_original: string;
@@ -58,90 +63,46 @@ export interface AppSettings {
 }
 
 export const SETTING_KEYS: (keyof AppSettings)[] = [
-    'silver_subscription_url',
-    'gold_subscription_url',
-    'youtube_tutorial_template',
-    'youtube_tutorial_product',
-    'youtube_tutorial_convert',
-    'price_silver_original',
-    'price_silver_sale',
-    'price_gold_original',
-    'price_gold_sale'
+    'silver_subscription_url', 'gold_subscription_url', 'youtube_tutorial_template', 
+    'youtube_tutorial_product', 'youtube_tutorial_convert', 'price_silver_original', 
+    'price_silver_sale', 'price_gold_original', 'price_gold_sale'
 ];
 
 export const fetchAppSettings = async (): Promise<AppSettings> => {
     const defaults: AppSettings = {
-        silver_subscription_url: '',
-        gold_subscription_url: '',
-        youtube_tutorial_template: '',
-        youtube_tutorial_product: '',
-        youtube_tutorial_convert: '',
-        // Default Pricing (Fallback)
-        price_silver_original: '11000',
-        price_silver_sale: '5500',
-        price_gold_original: '15000',
-        price_gold_sale: '8800'
+        silver_subscription_url: '', gold_subscription_url: '', youtube_tutorial_template: '',
+        youtube_tutorial_product: '', youtube_tutorial_convert: '',
+        price_silver_original: '11000', price_silver_sale: '5500',
+        price_gold_original: '15000', price_gold_sale: '8800'
     };
-
-    if (!supabase) {
-        return JSON.parse(localStorage.getItem('demo_settings') || JSON.stringify(defaults));
-    }
-
+    if (!supabase) return JSON.parse(localStorage.getItem('demo_settings') || JSON.stringify(defaults));
     try {
-        // 비인증 세션(anon)에서도 app_settings를 읽을 수 있도록 정책이 설정되어 있어야 함
         const { data, error } = await supabase.from('app_settings').select('key, value');
-        
-        // RLS 정책 등으로 인해 에러가 발생해도 중단하지 않고 기본값 반환
-        if (error) {
-            console.warn("Public settings fetch blocked by RLS, using default values.");
-            return defaults;
-        }
-        
+        if (error) return defaults;
         const settings: any = { ...defaults };
         if (data && data.length > 0) {
             data.forEach((row: any) => {
-                if (SETTING_KEYS.includes(row.key as keyof AppSettings)) {
-                    settings[row.key as keyof AppSettings] = row.value || '';
-                }
+                if (SETTING_KEYS.includes(row.key as keyof AppSettings)) settings[row.key as keyof AppSettings] = row.value || '';
             });
         }
         return settings;
-    } catch (e) {
-        return defaults;
-    }
+    } catch (e) { return defaults; }
 };
 
 export const updateAppSettings = async (settings: AppSettings) => {
-    const payload = SETTING_KEYS.map(key => ({
-        key: key,
-        value: settings[key] ? String(settings[key]).trim() : ''
-    }));
-
+    const payload = SETTING_KEYS.map(key => ({ key: key, value: settings[key] ? String(settings[key]).trim() : '' }));
     if (supabase) {
-        const { error } = await supabase
-            .from('app_settings')
-            .upsert(payload, { onConflict: 'key' });
-        
-        if (error) {
-            console.error("Supabase Upsert Error:", error);
-            throw new Error(`저장 실패 (${error.code}): ${error.message}`);
-        }
-    } else {
-        localStorage.setItem('demo_settings', JSON.stringify(settings));
-    }
+        const { error } = await supabase.from('app_settings').upsert(payload, { onConflict: 'key' });
+        if (error) throw new Error(`저장 실패 (${error.code}): ${error.message}`);
+    } else { localStorage.setItem('demo_settings', JSON.stringify(settings)); }
 };
 
 // --- Activity Logs ---
 export const logActivity = async (userId: string, actionType: string, description: string) => {
   if (supabase) {
-    try {
-      await supabase.from('activity_logs').insert({ user_id: userId, action_type: actionType, description: description });
-    } catch (e) {
-      console.error("Logging failed:", e);
-    }
+    try { await supabase.from('activity_logs').insert({ user_id: userId, action_type: actionType, description: description }); } catch (e) {}
   }
 };
-
 export const fetchActivityLogs = async (userId: string): Promise<ActivityLog[]> => {
   if (supabase) {
     const { data, error } = await supabase.from('activity_logs').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(50);
@@ -149,7 +110,6 @@ export const fetchActivityLogs = async (userId: string): Promise<ActivityLog[]> 
   }
   return [];
 };
-
 export const fetchAllActivityLogs = async (): Promise<ActivityLog[]> => {
     if (supabase) {
         const { data, error } = await supabase.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(100);
@@ -166,13 +126,10 @@ export const getUserProfile = async (userId: string): Promise<UserProfile | null
         if (error) throw error;
         const effectiveTier = data.tier || DEFAULT_TIERS[data.tier_id] || DEFAULT_TIERS['free'];
         return { ...data, tier: effectiveTier };
-    } catch (e) {
-        return { id: userId, email: '', tier_id: 'free', role: 'user', tier: DEFAULT_TIERS['free'] };
-    }
+    } catch (e) { return { id: userId, email: '', tier_id: 'free', role: 'user', tier: DEFAULT_TIERS['free'] }; }
   }
   return null;
 };
-
 export const fetchAllProfiles = async (): Promise<UserProfile[]> => {
   if (supabase) {
     const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
@@ -181,23 +138,16 @@ export const fetchAllProfiles = async (): Promise<UserProfile[]> => {
   }
   return [];
 };
-
 export const updateUserProfile = async (userId: string, updates: any) => {
-    if (supabase) {
-        const { error } = await supabase.from('profiles').update(updates).eq('id', userId);
-        if (error) throw error;
-    }
+    if (supabase) { const { error } = await supabase.from('profiles').update(updates).eq('id', userId); if (error) throw error; }
 };
-
 export const getUsageStats = async (userId: string) => {
   if (supabase) {
     try {
       const { count: productCount } = await supabase.from('products').select('*', { count: 'exact', head: true }).eq('user_id', userId);
       const { count: templateCount } = await supabase.from('invoice_templates').select('*', { count: 'exact', head: true }).eq('user_id', userId);
       return { productCount: productCount || 0, templateCount: templateCount || 0 };
-    } catch (e) {
-      return { productCount: 0, templateCount: 0 };
-    }
+    } catch (e) { return { productCount: 0, templateCount: 0 }; }
   }
   return { productCount: 0, templateCount: 0 };
 };
@@ -211,32 +161,21 @@ export const fetchTemplates = async (): Promise<InvoiceTemplate[]> => {
   }
   return [];
 };
-
 export const createTemplate = async (template: Omit<InvoiceTemplate, 'id' | 'user_id'>): Promise<InvoiceTemplate> => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('인증이 만료되었습니다.');
-  
-  const payload: any = { 
-    user_id: user.id, 
-    name: template.name, 
-    headers: template.headers 
-  };
-  
-  if (template.outputHeaders && template.outputHeaders.length > 0) {
-      payload.output_headers = template.outputHeaders;
-  }
-
+  const payload: any = { user_id: user.id, name: template.name, headers: template.headers };
+  if (template.outputHeaders && template.outputHeaders.length > 0) { payload.output_headers = template.outputHeaders; }
   const { data, error } = await supabase.from('invoice_templates').insert(payload).select().single();
   if (error) throw error;
   await logActivity(user.id, 'CREATE_TEMPLATE', `송장 양식 '${template.name}' 생성`);
   return mapTemplateFromDB(data);
 };
-
 export const deleteTemplate = async (id: string): Promise<void> => {
   if (supabase) await supabase.from('invoice_templates').delete().eq('id', id);
 };
 
-// --- Products ---
+// --- Products (Updated with Financials) ---
 export const fetchProducts = async (): Promise<Product[]> => {
   if (supabase) {
     const { data, error } = await supabase.from('products').select('*').order('created_at');
@@ -245,7 +184,6 @@ export const fetchProducts = async (): Promise<Product[]> => {
   }
   return [];
 };
-
 export const createProduct = async (product: Omit<Product, 'id' | 'user_id'>): Promise<Product> => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('인증이 만료되었습니다.');
@@ -256,13 +194,18 @@ export const createProduct = async (product: Omit<Product, 'id' | 'user_id'>): P
     additional_name: product.additionalName, 
     use_additional_name: product.useAdditionalName, 
     supplier_name: product.supplierName, 
-    template_id: product.templateId 
+    template_id: product.templateId,
+    // Financials
+    purchase_cost: product.purchaseCost,
+    sales_price: product.salesPrice,
+    shipping_cost: product.shippingCost,
+    other_cost: product.otherCost,
+    market_fee_rate: product.marketFeeRate
   }).select().single();
   if (error) throw error;
   await logActivity(user.id, 'CREATE_PRODUCT', `제품 '${product.sku}' 등록`);
   return mapProductFromDB(data);
 };
-
 export const createProductsBulk = async (products: Omit<Product, 'id' | 'user_id'>[]) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
@@ -273,13 +216,18 @@ export const createProductsBulk = async (products: Omit<Product, 'id' | 'user_id
       additional_name: p.additionalName, 
       use_additional_name: p.useAdditionalName, 
       supplier_name: p.supplierName, 
-      template_id: p.templateId 
+      template_id: p.templateId,
+      // Bulk financials (Optional in CSV, default 0)
+      purchase_cost: p.purchaseCost || 0,
+      sales_price: p.salesPrice || 0,
+      shipping_cost: p.shippingCost || 0,
+      other_cost: p.otherCost || 0,
+      market_fee_rate: p.marketFeeRate || 0
     }));
     const { error } = await supabase.from('products').insert(payload);
     if (error) throw error;
     await logActivity(user.id, 'CREATE_PRODUCT_BULK', `${products.length}개의 제품 대량 등록`);
 };
-
 export const updateProduct = async (id: string, product: Partial<Product>): Promise<Product> => {
     const updates: any = {};
     if (product.sku !== undefined) updates.sku = product.sku;
@@ -288,12 +236,44 @@ export const updateProduct = async (id: string, product: Partial<Product>): Prom
     if (product.useAdditionalName !== undefined) updates.use_additional_name = product.useAdditionalName;
     if (product.supplierName !== undefined) updates.supplier_name = product.supplierName;
     if (product.templateId !== undefined) updates.template_id = product.templateId;
+    // Financials
+    if (product.purchaseCost !== undefined) updates.purchase_cost = product.purchaseCost;
+    if (product.salesPrice !== undefined) updates.sales_price = product.salesPrice;
+    if (product.shippingCost !== undefined) updates.shipping_cost = product.shippingCost;
+    if (product.otherCost !== undefined) updates.other_cost = product.otherCost;
+    if (product.marketFeeRate !== undefined) updates.market_fee_rate = product.marketFeeRate;
 
     const { data, error } = await supabase.from('products').update(updates).eq('id', id).select().single();
     if (error) throw error;
     return mapProductFromDB(data);
 };
-
 export const deleteProduct = async (id: string): Promise<void> => {
   if (supabase) await supabase.from('products').delete().eq('id', id);
+};
+
+// --- Sales & CRM ---
+export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'created_at'>[]) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('인증이 만료되었습니다.');
+    
+    // Batch Insert
+    const { error } = await supabase.from('sales_records').insert(records);
+    if (error) throw error;
+    await logActivity(user.id, 'SAVE_SALES', `${records.length}건의 매출 기록 저장`);
+};
+
+export const fetchSalesRecords = async (startDate: string, endDate: string): Promise<SalesRecord[]> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+    
+    const { data, error } = await supabase
+        .from('sales_records')
+        .select('*')
+        .eq('user_id', user.id)
+        .gte('order_date', startDate)
+        .lte('order_date', endDate)
+        .order('order_date', { ascending: false });
+        
+    if (error) throw error;
+    return data || [];
 };
