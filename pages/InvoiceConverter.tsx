@@ -329,14 +329,31 @@ export const InvoiceConverter: React.FC = () => {
           const monthDir = await yearDir.getDirectoryHandle(month, { create: true });
           const targetDir = await monthDir.getDirectoryHandle(dateDirName, { create: true });
 
-          // 3. Write Excel Files
-          const writeFile = async (dirHandle: any, filename: string, content: any) => {
-              const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
-              const writable = await fileHandle.createWritable();
-              await writable.write(content);
-              await writable.close();
+          // Helper: Write with versioning if file exists
+          const writeExcelWithVersioning = async (dirHandle: any, baseName: string, content: any) => {
+             let fileName = `${baseName}.xlsx`;
+             let counter = 1;
+             
+             // Check if file exists and increment version
+             while (true) {
+                 try {
+                     await dirHandle.getFileHandle(fileName); // Throws if not found
+                     // File exists, create new name
+                     fileName = `${baseName}_version_${String(counter).padStart(2, '0')}.xlsx`;
+                     counter++;
+                 } catch (e) {
+                     // File not found, safe to use this name
+                     break;
+                 }
+             }
+
+             const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+             const writable = await fileHandle.createWritable();
+             await writable.write(content);
+             await writable.close();
           };
 
+          // 3. Write Excel Files (Invoice Files)
           for (const [key, group] of fileGroups) {
               const tpl = templateMap.get(group.templateId);
               if (!tpl) continue;
@@ -369,17 +386,41 @@ export const InvoiceConverter: React.FC = () => {
               XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
               const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
               
-              await writeFile(supplierDir, `${group.fileName}.xlsx`, excelBuffer);
+              // Use versioning logic
+              await writeExcelWithVersioning(supplierDir, group.fileName, excelBuffer);
           }
 
-          // 4. Write Summary
-          const summaryData = Object.entries(financialSummary).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
-          const summaryWs = XLSX.utils.json_to_sheet(summaryData);
+          // 4. Write or Append Summary
+          const summaryFileName = `00_정산요약_${date}.xlsx`;
+          const newSummaryRows = Object.entries(financialSummary).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
+          
+          let finalSummaryData = newSummaryRows;
+          
+          try {
+              // Try to read existing summary
+              const existingHandle = await targetDir.getFileHandle(summaryFileName);
+              const file = await existingHandle.getFile();
+              const arrayBuffer = await file.arrayBuffer();
+              const wb = XLSX.read(arrayBuffer, { type: 'array' });
+              const ws = wb.Sheets[wb.SheetNames[0]];
+              const existingData = XLSX.utils.sheet_to_json(ws);
+              
+              // Append new rows to existing data
+              finalSummaryData = [...existingData, ...newSummaryRows] as any[];
+          } catch (e) {
+              // File doesn't exist, use new data only
+          }
+
+          const summaryWs = XLSX.utils.json_to_sheet(finalSummaryData);
           const summaryWb = XLSX.utils.book_new();
           XLSX.utils.book_append_sheet(summaryWb, summaryWs, "정산요약");
           const summaryBuffer = XLSX.write(summaryWb, { bookType: 'xlsx', type: 'array' });
           
-          await writeFile(targetDir, `00_정산요약_${date}.xlsx`, summaryBuffer);
+          // Write (Overwrite/Create) the summary file
+          const summaryFileHandle = await targetDir.getFileHandle(summaryFileName, { create: true });
+          const summaryWritable = await summaryFileHandle.createWritable();
+          await summaryWritable.write(summaryBuffer);
+          await summaryWritable.close();
 
           // 5. Save CRM
           await saveCrmDataOnly(salesRecordsToSave);

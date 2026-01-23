@@ -277,3 +277,12 @@ export const fetchSalesRecords = async (startDate: string, endDate: string): Pro
     if (error) throw error;
     return data || [];
 };
+
+export const deleteSalesRecords = async (ids: string[]) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('인증이 만료되었습니다.');
+    
+    const { error } = await supabase.from('sales_records').delete().in('id', ids).eq('user_id', user.id);
+    if (error) throw error;
+    await logActivity(user.id, 'DELETE_SALES', `${ids.length}건의 매출 기록 삭제`);
+};
