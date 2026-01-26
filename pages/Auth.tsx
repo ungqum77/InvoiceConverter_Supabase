@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, IS_CONFIG_ERROR, CONFIG_ERROR_MESSAGE } from '../services/supabase';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '../components/Button';
-import { Lock, Mail, Loader2, AlertTriangle, Info, UserX, AlertCircle, HelpCircle, Copy, Check } from 'lucide-react';
+import { Lock, Mail, Loader2, AlertTriangle, UserX, AlertCircle, Copy, Check, ExternalLink, Globe } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export const Auth: React.FC = () => {
@@ -14,12 +13,26 @@ export const Auth: React.FC = () => {
   const [viewMode, setViewMode] = useState<'login' | 'signup' | 'forgot_password' | 'restore_account' | 'update_password'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isProcessingHash, setIsProcessingHash] = useState(false);
 
   const hasRedirected = useRef(false);
+
+  // 현재 브라우저의 정확한 주소 (예: http://localhost:3000)
+  const currentOrigin = window.location.origin;
+  const currentPort = window.location.port || '80';
+  // 5173포트가 아니고 로컬호스트인 경우 경고 표시
+  const isPortMismatch = currentPort !== '5173' && window.location.hostname === 'localhost' && !IS_CONFIG_ERROR;
+
+  // URL Hash에 access_token이 있으면 '로그인 처리 중' 상태로 전환
+  useEffect(() => {
+    if (location.hash && location.hash.includes('access_token')) {
+        setIsProcessingHash(true);
+        setLoading(true);
+    }
+  }, [location]);
 
   useEffect(() => {
     if (!authLoading && user && !isDeletedAccount && !hasRedirected.current) {
@@ -40,14 +53,13 @@ export const Auth: React.FC = () => {
     setLoading(true);
     try {
         if (supabase) {
-            // 현재 브라우저의 주소(Origin)을 리디렉션 타겟으로 설정
-            const redirectUrl = window.location.origin;
-            console.log("Google Login Redirect URL:", redirectUrl);
+            console.log("Google Login Redirecting to:", currentOrigin);
             
             const { error } = await supabase.auth.signInWithOAuth({
                 provider: 'google',
                 options: {
-                    redirectTo: redirectUrl,
+                    // 중요: 현재 브라우저의 주소로 명시적 리다이렉트 지정
+                    redirectTo: currentOrigin,
                     queryParams: {
                         access_type: 'offline',
                         prompt: 'consent',
@@ -84,7 +96,6 @@ export const Auth: React.FC = () => {
     setLoading(true);
     setMessage(null);
 
-    // Calculate trial end date (3 days from now)
     const trialEndDate = new Date();
     trialEndDate.setDate(trialEndDate.getDate() + 3);
 
@@ -98,7 +109,7 @@ export const Auth: React.FC = () => {
             email, 
             password,
             options: { 
-              emailRedirectTo: window.location.origin,
+              emailRedirectTo: currentOrigin,
               data: {
                 tier_id: 'silver',
                 subscription_end_date: trialEndDate.toISOString()
@@ -109,13 +120,12 @@ export const Auth: React.FC = () => {
           setMessage({ type: 'success', text: '인증 메일을 발송했습니다. 메일 확인 후 로그인하면 실버 등급 3일 체험권이 적용됩니다.' });
         } else if (viewMode === 'forgot_password') {
             const { error } = await supabase.auth.resetPasswordForEmail(email, {
-                redirectTo: window.location.origin + '/#/auth', 
+                redirectTo: currentOrigin + '/#/auth', 
             });
             if (error) throw error;
             setMessage({ type: 'success', text: '비밀번호 초기화 링크를 발송했습니다.' });
         }
       } else {
-        // 데모 모드
         await new Promise(r => setTimeout(r, 800)); 
         const demoUser = {
             id: 'demo-' + Math.random().toString(36).substr(2, 9),
@@ -138,7 +148,7 @@ export const Auth: React.FC = () => {
   };
 
   const copyOrigin = () => {
-      navigator.clipboard.writeText(window.location.origin);
+      navigator.clipboard.writeText(currentOrigin);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
   };
@@ -156,8 +166,18 @@ export const Auth: React.FC = () => {
       );
   }
 
-  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  const currentPort = window.location.port || '80';
+  // 로그인 성공 후 리다이렉트 처리 중일 때
+  if (isProcessingHash || (loading && !message)) {
+      return (
+        <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4">
+           <div className="text-center">
+              <Loader2 className="animate-spin text-primary mx-auto mb-4" size={48} />
+              <h2 className="text-xl font-bold text-slate-900">로그인 정보를 확인 중입니다...</h2>
+              <p className="text-slate-500 text-sm mt-2">잠시만 기다려주세요.</p>
+           </div>
+        </div>
+      );
+  }
 
   return (
     <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4 bg-slate-50">
@@ -176,27 +196,39 @@ export const Auth: React.FC = () => {
            </div>
         )}
 
-        {/* 로컬호스트 개발 환경일 때만 표시되는 가이드 */}
-        {isLocalhost && !IS_CONFIG_ERROR && (
-            <div className="mb-6 p-4 bg-indigo-50 text-indigo-900 rounded-lg text-[11px] border border-indigo-100 leading-relaxed shadow-sm">
-                <div className="flex items-start gap-2 mb-2">
-                    <HelpCircle size={14} className="shrink-0 mt-0.5 text-indigo-600" />
-                    <div className="font-bold text-indigo-700">Supabase 설정 필수 확인 (연결 거부 해결)</div>
-                </div>
-                <div className="ml-5 space-y-3">
-                    <p>
-                        현재 앱이 <b>{currentPort}번 포트</b>에서 실행 중입니다.<br/>
-                        Supabase 대시보드(URL Configuration)의 <b>Site URL</b>이 아래 주소와 정확히 일치해야 합니다. (3000번으로 되어 있다면 변경 필수)
-                    </p>
-                    <div className="flex items-center gap-2 bg-white border border-indigo-200 rounded px-2 py-2 font-mono text-xs text-slate-700 font-bold">
-                        <span className="flex-1 truncate">{window.location.origin}</span>
-                        <button onClick={copyOrigin} className="p-1 hover:bg-slate-100 rounded text-slate-500 transition-colors" title="주소 복사">
-                            {copied ? <Check size={14} className="text-green-600"/> : <Copy size={14}/>}
-                        </button>
+        {/* 중요: 포트 불일치 경고 (3000번 등에서 실행 시) */}
+        {isPortMismatch && (
+            <div className="mb-6 p-5 bg-amber-50 text-amber-900 rounded-xl text-xs border-2 border-amber-200 leading-relaxed shadow-sm relative overflow-hidden">
+                <div className="flex items-start gap-2 mb-3 z-10 relative">
+                    <div className="p-1.5 bg-amber-100 rounded text-amber-700 mt-1"><Globe size={18} /></div>
+                    <div>
+                        <div className="font-bold text-sm text-amber-800">Supabase 설정 확인 필요</div>
+                        <div className="text-amber-800 mt-1">
+                            현재 <b>{currentPort}번 포트</b>에서 실행 중입니다.<br/>
+                            로그인 후 <b>5173번 포트</b>로 튕기지 않으려면 설정이 필요합니다.
+                        </div>
                     </div>
-                    <p className="text-[10px] text-indigo-500 border-t border-indigo-100 pt-2 mt-1">
-                        * Redirect URLs 목록에도 위 주소가 추가되어 있어야 합니다.
-                    </p>
+                </div>
+                
+                <div className="bg-white/60 p-3 rounded-lg border border-amber-100 mb-3 space-y-2">
+                    <div>
+                        <p className="mb-1 text-slate-500 font-bold text-[10px] uppercase">1. 이 주소를 복사하세요</p>
+                        <div className="flex items-center gap-2">
+                            <code className="flex-1 bg-white border border-slate-200 px-2 py-1.5 rounded text-slate-700 font-mono font-bold text-xs">{currentOrigin}</code>
+                            <button onClick={copyOrigin} className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 rounded text-slate-500 transition-colors" title="주소 복사">
+                                {copied ? <Check size={14} className="text-green-600"/> : <Copy size={14}/>}
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <p className="mb-1 text-slate-500 font-bold text-[10px] uppercase">2. Supabase Site URL 변경</p>
+                        <p className="text-[11px] text-slate-600">Authentication {'>'} URL Configuration {'>'} <b>Site URL</b></p>
+                    </div>
+                </div>
+
+                <div className="text-amber-800 pl-1 font-medium flex items-center gap-1.5">
+                   <AlertTriangle size={14} className="text-amber-600"/>
+                   <span>Site URL을 위 주소로 변경해야 오류가 해결됩니다.</span>
                 </div>
             </div>
         )}
@@ -210,16 +242,15 @@ export const Auth: React.FC = () => {
           </div>
         )}
 
-        {/* Social Login Section */}
         {viewMode !== 'forgot_password' && (
             <div className="mb-6">
                 <button 
                     type="button"
                     onClick={handleGoogleLogin}
                     disabled={loading}
-                    className="w-full flex items-center justify-center gap-2.5 bg-white text-slate-700 border border-slate-300 rounded-lg py-3 text-sm font-bold hover:bg-slate-50 hover:shadow-sm transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+                    className="w-full flex items-center justify-center gap-2.5 bg-white text-slate-700 border border-slate-300 rounded-lg py-3 text-sm font-bold hover:bg-slate-50 hover:shadow-sm transition-all disabled:opacity-70 disabled:cursor-not-allowed group"
                 >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5 group-hover:scale-110 transition-transform" viewBox="0 0 24 24">
                         <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
                         <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
                         <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.84z" fill="#FBBC05"/>
