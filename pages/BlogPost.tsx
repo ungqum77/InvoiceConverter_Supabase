@@ -1,13 +1,16 @@
+
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { fetchBlogPostBySlug } from '../services/dbService';
 import { BlogPost } from '../types';
 import { ArrowLeft, Calendar, Loader2, Share2 } from 'lucide-react';
+import { marked } from 'marked';
 
 export const BlogPostPage: React.FC = () => {
     const { slug } = useParams<{ slug: string }>();
     const [post, setPost] = useState<BlogPost | null>(null);
     const [loading, setLoading] = useState(true);
+    const [htmlContent, setHtmlContent] = useState('');
 
     useEffect(() => {
         const load = async () => {
@@ -15,6 +18,14 @@ export const BlogPostPage: React.FC = () => {
                 try {
                     const data = await fetchBlogPostBySlug(slug);
                     setPost(data);
+                    if (data?.content) {
+                        const parsed = marked.parse(data.content);
+                        if (parsed instanceof Promise) {
+                            parsed.then(str => setHtmlContent(str));
+                        } else {
+                            setHtmlContent(parsed as string);
+                        }
+                    }
                 } catch (e) {
                     console.error(e);
                 } finally {
@@ -61,8 +72,8 @@ export const BlogPostPage: React.FC = () => {
             </header>
 
             <div 
-                className="prose prose-slate max-w-none prose-headings:font-bold prose-a:text-primary hover:prose-a:underline prose-img:rounded-xl"
-                dangerouslySetInnerHTML={{ __html: post.content }}
+                className="prose prose-slate max-w-none prose-headings:font-bold prose-a:text-primary hover:prose-a:underline prose-img:rounded-xl prose-strong:text-indigo-600 prose-strong:font-black"
+                dangerouslySetInnerHTML={{ __html: htmlContent }}
             />
             
             <div className="mt-16 pt-8 border-t border-slate-200">

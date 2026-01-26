@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings, fetchAllTiers, updateTier, fetchAnalyticsStats, trackEvent, fetchBlogPosts, createBlogPost, updateBlogPost, deleteBlogPost } from '../services/dbService';
 import { UserProfile, ActivityLog, Tier, AnalyticsEvent, BlogPost } from '../types';
 import { Button } from '../components/Button';
-import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database, CalendarPlus, BarChart2, PieChart, Activity, MousePointer2, BookOpen, PenTool, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database, CalendarPlus, BarChart2, PieChart, Activity, MousePointer2, BookOpen, PenTool, Eye, EyeOff, Trash2, Save } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, IS_CONFIG_ERROR } from '../services/supabase';
@@ -79,6 +79,7 @@ export const AdminDashboard: React.FC = () => {
     const [isEditingPost, setIsEditingPost] = useState(false);
     const [editingPostId, setEditingPostId] = useState<string | null>(null);
     const [postForm, setPostForm] = useState({ title: '', slug: '', content: '', excerpt: '', is_published: false });
+    const [autoSaveStatus, setAutoSaveStatus] = useState<string>('');
 
     const SQL_SOLUTION = `-- [SQL V24] 블로그 및 콘텐츠 관리용 테이블
 CREATE TABLE IF NOT EXISTS public.blog_posts (
@@ -132,6 +133,22 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
         if (!currentUser || !isAdmin) { navigate('/'); return; }
         if (!IS_CONFIG_ERROR) loadData();
     }, [currentUser, isAdmin, authLoading, activeTab]);
+
+    // Auto-save Effect
+    useEffect(() => {
+        if (!isEditingPost) return;
+        
+        const timer = setTimeout(() => {
+            const draftKey = editingPostId ? `blog_draft_${editingPostId}` : 'blog_draft_new';
+            // Only save if there is content
+            if (postForm.title || postForm.content) {
+                localStorage.setItem(draftKey, JSON.stringify(postForm));
+                setAutoSaveStatus(`자동 저장됨 ${new Date().toLocaleTimeString()}`);
+            }
+        }, 1000); // 1 second debounce
+
+        return () => clearTimeout(timer);
+    }, [postForm, isEditingPost, editingPostId]);
 
     const loadData = async () => {
         if (IS_CONFIG_ERROR) return;
@@ -239,13 +256,34 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
 
     // Blog Handlers
     const handleOpenPostEditor = (post?: BlogPost) => {
+        const draftKey = post ? `blog_draft_${post.id}` : 'blog_draft_new';
+        const savedDraft = localStorage.getItem(draftKey);
+        
+        let initialForm = { title: '', slug: '', content: '', excerpt: '', is_published: false };
+
         if (post) {
             setEditingPostId(post.id);
-            setPostForm({ title: post.title, slug: post.slug, content: post.content, excerpt: post.excerpt || '', is_published: post.is_published });
+            initialForm = { title: post.title, slug: post.slug, content: post.content, excerpt: post.excerpt || '', is_published: post.is_published };
         } else {
             setEditingPostId(null);
-            setPostForm({ title: '', slug: '', content: '', excerpt: '', is_published: false });
         }
+
+        // Check for draft
+        if (savedDraft) {
+            const draft = JSON.parse(savedDraft);
+            // If it's a new post OR the draft content is different from DB content
+            if (!post || (draft.content !== post.content || draft.title !== post.title)) {
+                if (confirm('이전에 작성 중이던 임시 저장된 내용이 있습니다. 불러오시겠습니까?')) {
+                    initialForm = draft;
+                } else {
+                    // If user declines draft, maybe clear it? For now, keep it safely.
+                    // localStorage.removeItem(draftKey); 
+                }
+            }
+        }
+
+        setPostForm(initialForm);
+        setAutoSaveStatus('');
         setIsEditingPost(true);
     };
 
@@ -256,9 +294,11 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
             setLoading(true);
             if (editingPostId) {
                 await updateBlogPost(editingPostId, postForm);
+                localStorage.removeItem(`blog_draft_${editingPostId}`); // Clear draft on success
                 alert("수정되었습니다.");
             } else {
                 await createBlogPost(postForm);
+                localStorage.removeItem('blog_draft_new'); // Clear draft on success
                 alert("등록되었습니다.");
             }
             setIsEditingPost(false);
@@ -266,9 +306,16 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
         } catch (e: any) { alert(e.message); } finally { setLoading(false); }
     };
 
+    const handleCancelEdit = () => {
+        if (confirm("작성을 취소하시겠습니까? 임시 저장된 내용은 유지됩니다.")) {
+            setIsEditingPost(false);
+        }
+    };
+
     const handleDeletePost = async (id: string) => {
         if (confirm("정말 삭제하시겠습니까?")) {
             await deleteBlogPost(id);
+            localStorage.removeItem(`blog_draft_${id}`);
             loadData();
         }
     };
@@ -446,7 +493,7 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
                             <div>
                                 <div className="flex justify-between items-center mb-6">
                                     <h3 className="text-xl font-bold text-slate-800">{editingPostId ? '글 수정' : '새 글 작성'}</h3>
-                                    <Button variant="secondary" onClick={() => setIsEditingPost(false)} icon={<X size={16}/>}>취소</Button>
+                                    <Button variant="secondary" onClick={handleCancelEdit} icon={<X size={16}/>}>취소</Button>
                                 </div>
                                 <form onSubmit={handleSavePost} className="space-y-4 max-w-4xl">
                                     <div className="grid grid-cols-2 gap-4">
@@ -464,9 +511,12 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
                                         <input className="w-full border p-2 rounded" value={postForm.excerpt} onChange={e => setPostForm({...postForm, excerpt: e.target.value})} placeholder="목록에 표시될 짧은 설명" />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-bold text-slate-600 mb-1">본문 (HTML 지원)</label>
-                                        <textarea className="w-full border p-2 rounded h-64 font-mono text-sm" value={postForm.content} onChange={e => setPostForm({...postForm, content: e.target.value})} placeholder="<p>내용을 입력하세요...</p>" />
-                                        <p className="text-xs text-slate-400 mt-1">* 기본적인 HTML 태그(&lt;h2&gt;, &lt;p&gt;, &lt;ul&gt;, &lt;b&gt; 등)를 사용할 수 있습니다.</p>
+                                        <label className="block text-sm font-bold text-slate-600 mb-1">본문 (Markdown 지원)</label>
+                                        <textarea className="w-full border p-2 rounded h-64 font-mono text-sm" value={postForm.content} onChange={e => setPostForm({...postForm, content: e.target.value})} placeholder="**Markdown** 형식으로 작성하세요." />
+                                        <div className="flex justify-between items-center mt-1">
+                                            <p className="text-xs text-slate-400">* 굵게(**text**), 헤더(## Title), 리스트(- item) 등 마크다운 문법을 사용할 수 있습니다.</p>
+                                            {autoSaveStatus && <p className="text-xs font-bold text-green-600 flex items-center gap-1 animate-pulse"><Save size={12}/> {autoSaveStatus}</p>}
+                                        </div>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <input type="checkbox" id="published" checked={postForm.is_published} onChange={e => setPostForm({...postForm, is_published: e.target.checked})} />
