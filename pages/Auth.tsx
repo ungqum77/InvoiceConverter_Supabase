@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase, IS_CONFIG_ERROR, CONFIG_ERROR_MESSAGE } from '../services/supabase';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '../components/Button';
-import { Lock, Mail, Loader2, AlertTriangle, Info, UserX, AlertCircle } from 'lucide-react';
+import { Lock, Mail, Loader2, AlertTriangle, Info, UserX, AlertCircle, HelpCircle, Copy, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export const Auth: React.FC = () => {
@@ -17,6 +17,7 @@ export const Auth: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const hasRedirected = useRef(false);
 
@@ -39,10 +40,14 @@ export const Auth: React.FC = () => {
     setLoading(true);
     try {
         if (supabase) {
+            // 현재 브라우저의 주소(Origin)을 리디렉션 타겟으로 설정
+            const redirectUrl = window.location.origin;
+            console.log("Google Login Redirect URL:", redirectUrl);
+            
             const { error } = await supabase.auth.signInWithOAuth({
                 provider: 'google',
                 options: {
-                    redirectTo: window.location.origin,
+                    redirectTo: redirectUrl,
                     queryParams: {
                         access_type: 'offline',
                         prompt: 'consent',
@@ -50,7 +55,6 @@ export const Auth: React.FC = () => {
                 },
             });
             if (error) throw error;
-            // OAuth는 리다이렉트되므로 setLoading(false)가 필요 없을 수 있지만, 에러 발생 시를 대비
         } else {
             setMessage({ type: 'error', text: 'Supabase 설정이 필요합니다.' });
             setLoading(false);
@@ -59,9 +63,8 @@ export const Auth: React.FC = () => {
         console.error("Google Auth Error:", error);
         let msg = error.message || '구글 로그인 중 오류가 발생했습니다.';
         
-        // Supabase 설정 에러에 대한 친절한 안내 메시지 추가
         if (msg.includes('provider is not enabled')) {
-            msg = 'Supabase 대시보드에서 Google 로그인이 활성화되지 않았습니다. (Authentication > Providers > Google Enable)';
+            msg = 'Supabase 대시보드에서 Google 로그인을 활성화해주세요 (Authentication > Providers).';
         } else if (msg.includes('Client ID')) {
             msg = 'Google Client ID 설정이 필요합니다.';
         }
@@ -112,7 +115,7 @@ export const Auth: React.FC = () => {
             setMessage({ type: 'success', text: '비밀번호 초기화 링크를 발송했습니다.' });
         }
       } else {
-        // 데모 모드 (실버 3일 체험권 포함)
+        // 데모 모드
         await new Promise(r => setTimeout(r, 800)); 
         const demoUser = {
             id: 'demo-' + Math.random().toString(36).substr(2, 9),
@@ -134,6 +137,12 @@ export const Auth: React.FC = () => {
     }
   };
 
+  const copyOrigin = () => {
+      navigator.clipboard.writeText(window.location.origin);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+  };
+
   if (viewMode === 'restore_account') {
       return (
         <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4">
@@ -146,6 +155,9 @@ export const Auth: React.FC = () => {
         </div>
       );
   }
+
+  const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const currentPort = window.location.port || '80';
 
   return (
     <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4 bg-slate-50">
@@ -162,6 +174,31 @@ export const Auth: React.FC = () => {
              <AlertCircle size={16} className="shrink-0 mt-0.5" />
              <div>{CONFIG_ERROR_MESSAGE}</div>
            </div>
+        )}
+
+        {/* 로컬호스트 개발 환경일 때만 표시되는 가이드 */}
+        {isLocalhost && !IS_CONFIG_ERROR && (
+            <div className="mb-6 p-4 bg-indigo-50 text-indigo-900 rounded-lg text-[11px] border border-indigo-100 leading-relaxed shadow-sm">
+                <div className="flex items-start gap-2 mb-2">
+                    <HelpCircle size={14} className="shrink-0 mt-0.5 text-indigo-600" />
+                    <div className="font-bold text-indigo-700">Supabase 설정 필수 확인 (연결 거부 해결)</div>
+                </div>
+                <div className="ml-5 space-y-3">
+                    <p>
+                        현재 앱이 <b>{currentPort}번 포트</b>에서 실행 중입니다.<br/>
+                        Supabase 대시보드(URL Configuration)의 <b>Site URL</b>이 아래 주소와 정확히 일치해야 합니다. (3000번으로 되어 있다면 변경 필수)
+                    </p>
+                    <div className="flex items-center gap-2 bg-white border border-indigo-200 rounded px-2 py-2 font-mono text-xs text-slate-700 font-bold">
+                        <span className="flex-1 truncate">{window.location.origin}</span>
+                        <button onClick={copyOrigin} className="p-1 hover:bg-slate-100 rounded text-slate-500 transition-colors" title="주소 복사">
+                            {copied ? <Check size={14} className="text-green-600"/> : <Copy size={14}/>}
+                        </button>
+                    </div>
+                    <p className="text-[10px] text-indigo-500 border-t border-indigo-100 pt-2 mt-1">
+                        * Redirect URLs 목록에도 위 주소가 추가되어 있어야 합니다.
+                    </p>
+                </div>
+            </div>
         )}
 
         {message && (
