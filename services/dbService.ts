@@ -1,6 +1,6 @@
 
 import { supabase } from './supabase';
-import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings, AnalyticsEvent } from '../types';
+import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings, AnalyticsEvent, BlogPost } from '../types';
 
 export type { AppSettings };
 
@@ -368,4 +368,49 @@ export const fetchAnalyticsStats = async (startDate: string, endDate: string) =>
         console.error("Analytics fetch error:", e);
         return [];
     }
+};
+
+// --- Blog Service (New) ---
+
+export const fetchBlogPosts = async (includeUnpublished = false): Promise<BlogPost[]> => {
+    if (!supabase) return [];
+    let query = supabase.from('blog_posts').select('*').order('created_at', { ascending: false });
+    if (!includeUnpublished) {
+        query = query.eq('is_published', true);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+};
+
+export const fetchBlogPostBySlug = async (slug: string): Promise<BlogPost | null> => {
+    if (!supabase) return null;
+    const { data, error } = await supabase.from('blog_posts').select('*').eq('slug', slug).single();
+    if (error) return null;
+    return data;
+};
+
+export const createBlogPost = async (post: Omit<BlogPost, 'id' | 'created_at' | 'updated_at' | 'view_count'>) => {
+    if (!supabase) throw new Error("Supabase not connected");
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('blog_posts').insert({
+        ...post,
+        author_id: user?.id
+    });
+    if (error) throw error;
+};
+
+export const updateBlogPost = async (id: string, updates: Partial<BlogPost>) => {
+    if (!supabase) throw new Error("Supabase not connected");
+    const { error } = await supabase.from('blog_posts').update({
+        ...updates,
+        updated_at: new Date().toISOString()
+    }).eq('id', id);
+    if (error) throw error;
+};
+
+export const deleteBlogPost = async (id: string) => {
+    if (!supabase) throw new Error("Supabase not connected");
+    const { error } = await supabase.from('blog_posts').delete().eq('id', id);
+    if (error) throw error;
 };

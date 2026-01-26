@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Package, Settings, FileText, Home, LogOut, User as UserIcon, LogIn, ShieldAlert, Menu, X, LayoutDashboard, ChevronRight, TrendingUp } from 'lucide-react';
+import { Package, Settings, FileText, Home, LogOut, User as UserIcon, LogIn, ShieldAlert, Menu, X, LayoutDashboard, ChevronRight, TrendingUp, BookOpen } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './Button';
 
@@ -60,6 +60,9 @@ export const Navbar: React.FC = () => {
           <div className="hidden md:flex items-center gap-1">
             <Link to="/" className={`px-4 py-2 rounded-xl text-sm transition-all flex items-center gap-2 ${isActive('/')} border`}>
               <Home size={18} /> 홈
+            </Link>
+            <Link to="/blog" className={`px-4 py-2 rounded-xl text-sm transition-all flex items-center gap-2 ${isActive('/blog')} border`}>
+              <BookOpen size={18} /> 블로그
             </Link>
             {user && (
               <>
@@ -131,6 +134,14 @@ export const Navbar: React.FC = () => {
                 <div className="flex items-center gap-4">
                   <div className={`p-3 rounded-xl ${location.pathname === '/' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}><Home size={22} /></div>
                   <span className="text-lg font-bold">홈 화면</span>
+                </div>
+                <ChevronRight size={20} className="opacity-30" />
+              </Link>
+              
+              <Link to="/blog" onClick={closeMobileMenu} className={`flex items-center justify-between px-5 py-5 rounded-2xl border-2 transition-all ${isActive('/blog')}`}>
+                <div className="flex items-center gap-4">
+                  <div className={`p-3 rounded-xl ${location.pathname === '/blog' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}><BookOpen size={22} /></div>
+                  <span className="text-lg font-bold">블로그</span>
                 </div>
                 <ChevronRight size={20} className="opacity-30" />
               </Link>

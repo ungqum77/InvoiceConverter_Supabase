@@ -1,6 +1,7 @@
 import React, { ErrorInfo, ReactNode, useEffect } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
+import { Footer } from './components/Footer';
 import { Home } from './pages/Home';
 import { ProductManagement } from './pages/ProductManagement';
 import { InvoiceConverter } from './pages/InvoiceConverter';
@@ -8,6 +9,10 @@ import { SalesCRM } from './pages/SalesCRM';
 import { Auth } from './pages/Auth';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { InvoiceMatcher } from './pages/InvoiceMatcher';
+import { BlogList } from './pages/BlogList';
+import { BlogPostPage } from './pages/BlogPost';
+import { Privacy } from './pages/Privacy';
+import { Terms } from './pages/Terms';
 import { AuthProvider } from './contexts/AuthContext';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from './components/Button';
@@ -25,7 +30,6 @@ interface ErrorBoundaryState {
 
 class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   public state: ErrorBoundaryState = { hasError: false, error: null };
-  // Explicitly define props to fix type error
   public props: Readonly<ErrorBoundaryProps>;
 
   constructor(props: ErrorBoundaryProps) {
@@ -96,17 +100,24 @@ const App: React.FC = () => {
       <AuthProvider>
         <AnalyticsTracker>
             <HashRouter>
-            <div className="min-h-screen bg-background-light">
+            <div className="min-h-screen bg-background-light flex flex-col">
                 <Navbar />
-                <Routes>
-                <Route path="/" element={<Home />} />
-                <Route path="/auth" element={<Auth />} />
-                <Route path="/products" element={<ProductManagement />} />
-                <Route path="/convert" element={<InvoiceConverter />} />
-                <Route path="/crm" element={<SalesCRM />} />
-                <Route path="/admin" element={<AdminDashboard />} />
-                <Route path="/admin/match" element={<InvoiceMatcher />} />
-                </Routes>
+                <div className="flex-1">
+                    <Routes>
+                    <Route path="/" element={<Home />} />
+                    <Route path="/auth" element={<Auth />} />
+                    <Route path="/products" element={<ProductManagement />} />
+                    <Route path="/convert" element={<InvoiceConverter />} />
+                    <Route path="/crm" element={<SalesCRM />} />
+                    <Route path="/admin" element={<AdminDashboard />} />
+                    <Route path="/admin/match" element={<InvoiceMatcher />} />
+                    <Route path="/blog" element={<BlogList />} />
+                    <Route path="/blog/:slug" element={<BlogPostPage />} />
+                    <Route path="/privacy" element={<Privacy />} />
+                    <Route path="/terms" element={<Terms />} />
+                    </Routes>
+                </div>
+                <Footer />
             </div>
             </HashRouter>
         </AnalyticsTracker>

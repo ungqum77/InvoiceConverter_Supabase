@@ -122,3 +122,17 @@ export interface AnalyticsEvent {
   };
   created_at: string;
 }
+
+export interface BlogPost {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt?: string;
+  content: string;
+  thumbnail_url?: string;
+  is_published: boolean;
+  author_id?: string;
+  view_count: number;
+  created_at: string;
+  updated_at: string;
+}
