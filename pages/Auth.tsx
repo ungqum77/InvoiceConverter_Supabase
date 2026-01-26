@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase, IS_CONFIG_ERROR, CONFIG_ERROR_MESSAGE } from '../services/supabase';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '../components/Button';
-import { Lock, Mail, Loader2, AlertTriangle, UserX, AlertCircle, Copy, Check, ExternalLink, Globe } from 'lucide-react';
+import { Lock, Mail, Loader2, AlertTriangle, UserX, AlertCircle, Copy, Check, ExternalLink, Globe, HelpCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { trackEvent } from '../services/dbService';
 
 export const Auth: React.FC = () => {
   const { user, loading: authLoading, isDeletedAccount, signOut } = useAuth();
@@ -17,20 +19,20 @@ export const Auth: React.FC = () => {
   const [message, setMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [isProcessingHash, setIsProcessingHash] = useState(false);
+  const [showConfigHelp, setShowConfigHelp] = useState(false);
 
   const hasRedirected = useRef(false);
 
-  // 현재 브라우저의 정확한 주소 (예: http://localhost:3000)
+  // 현재 브라우저의 정확한 주소 (예: http://localhost:5173)
   const currentOrigin = window.location.origin;
-  const currentPort = window.location.port || '80';
-  // 5173포트가 아니고 로컬호스트인 경우 경고 표시
-  const isPortMismatch = currentPort !== '5173' && window.location.hostname === 'localhost' && !IS_CONFIG_ERROR;
-
+  
   // URL Hash에 access_token이 있으면 '로그인 처리 중' 상태로 전환
   useEffect(() => {
     if (location.hash && location.hash.includes('access_token')) {
         setIsProcessingHash(true);
         setLoading(true);
+        // 구글 로그인 성공으로 간주 (실제 세션 확인은 AuthContext에서 처리하지만 이벤트는 여기서)
+        trackEvent('login', { provider: 'google' });
     }
   }, [location]);
 
@@ -59,6 +61,7 @@ export const Auth: React.FC = () => {
                 provider: 'google',
                 options: {
                     // 중요: 현재 브라우저의 주소로 명시적 리다이렉트 지정
+                    // 이 주소가 Supabase Redirect URLs에 등록되어 있어야 함
                     redirectTo: currentOrigin,
                     queryParams: {
                         access_type: 'offline',
@@ -104,6 +107,7 @@ export const Auth: React.FC = () => {
         if (viewMode === 'login') {
           const { error } = await supabase.auth.signInWithPassword({ email, password });
           if (error) throw error;
+          trackEvent('login', { provider: 'email' });
         } else if (viewMode === 'signup') {
           const { error } = await supabase.auth.signUp({ 
             email, 
@@ -117,6 +121,7 @@ export const Auth: React.FC = () => {
             }
           });
           if (error) throw error;
+          trackEvent('signup', { provider: 'email', tier: 'silver_trial' });
           setMessage({ type: 'success', text: '인증 메일을 발송했습니다. 메일 확인 후 로그인하면 실버 등급 3일 체험권이 적용됩니다.' });
         } else if (viewMode === 'forgot_password') {
             const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -166,7 +171,6 @@ export const Auth: React.FC = () => {
       );
   }
 
-  // 로그인 성공 후 리다이렉트 처리 중일 때
   if (isProcessingHash || (loading && !message)) {
       return (
         <div className="min-h-[calc(100vh-64px)] flex items-center justify-center p-4">
@@ -194,43 +198,6 @@ export const Auth: React.FC = () => {
              <AlertCircle size={16} className="shrink-0 mt-0.5" />
              <div>{CONFIG_ERROR_MESSAGE}</div>
            </div>
-        )}
-
-        {/* 중요: 포트 불일치 경고 (3000번 등에서 실행 시) */}
-        {isPortMismatch && (
-            <div className="mb-6 p-5 bg-amber-50 text-amber-900 rounded-xl text-xs border-2 border-amber-200 leading-relaxed shadow-sm relative overflow-hidden">
-                <div className="flex items-start gap-2 mb-3 z-10 relative">
-                    <div className="p-1.5 bg-amber-100 rounded text-amber-700 mt-1"><Globe size={18} /></div>
-                    <div>
-                        <div className="font-bold text-sm text-amber-800">Supabase 설정 확인 필요</div>
-                        <div className="text-amber-800 mt-1">
-                            현재 <b>{currentPort}번 포트</b>에서 실행 중입니다.<br/>
-                            로그인 후 <b>5173번 포트</b>로 튕기지 않으려면 설정이 필요합니다.
-                        </div>
-                    </div>
-                </div>
-                
-                <div className="bg-white/60 p-3 rounded-lg border border-amber-100 mb-3 space-y-2">
-                    <div>
-                        <p className="mb-1 text-slate-500 font-bold text-[10px] uppercase">1. 이 주소를 복사하세요</p>
-                        <div className="flex items-center gap-2">
-                            <code className="flex-1 bg-white border border-slate-200 px-2 py-1.5 rounded text-slate-700 font-mono font-bold text-xs">{currentOrigin}</code>
-                            <button onClick={copyOrigin} className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 rounded text-slate-500 transition-colors" title="주소 복사">
-                                {copied ? <Check size={14} className="text-green-600"/> : <Copy size={14}/>}
-                            </button>
-                        </div>
-                    </div>
-                    <div>
-                        <p className="mb-1 text-slate-500 font-bold text-[10px] uppercase">2. Supabase Site URL 변경</p>
-                        <p className="text-[11px] text-slate-600">Authentication {'>'} URL Configuration {'>'} <b>Site URL</b></p>
-                    </div>
-                </div>
-
-                <div className="text-amber-800 pl-1 font-medium flex items-center gap-1.5">
-                   <AlertTriangle size={14} className="text-amber-600"/>
-                   <span>Site URL을 위 주소로 변경해야 오류가 해결됩니다.</span>
-                </div>
-            </div>
         )}
 
         {message && (
@@ -323,6 +290,39 @@ export const Auth: React.FC = () => {
                 </div>
             )}
         </div>
+        
+        {/* 하단 설정 가이드 (토글) */}
+        <div className="mt-8 border-t border-dashed border-slate-200 pt-4">
+             <button 
+                onClick={() => setShowConfigHelp(!showConfigHelp)}
+                className="w-full flex items-center justify-between text-xs text-slate-400 hover:text-slate-600 transition-colors py-2"
+             >
+                <div className="flex items-center gap-1.5"><HelpCircle size={14}/> <span>로그인이 안 되나요? (설정 확인)</span></div>
+                {showConfigHelp ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+             </button>
+             
+             {showConfigHelp && (
+                 <div className="mt-2 p-4 bg-slate-50 rounded-xl text-xs space-y-3 animate-fade-in border border-slate-200">
+                     <div>
+                         <p className="font-bold text-slate-700 mb-1">1. 현재 사이트 주소</p>
+                         <div className="flex items-center gap-2">
+                             <code className="flex-1 bg-white border border-slate-200 px-2 py-1.5 rounded text-blue-600 font-mono font-bold">{currentOrigin}</code>
+                             <button onClick={copyOrigin} className="p-1.5 bg-white border border-slate-200 hover:bg-slate-50 rounded text-slate-500 transition-colors" title="복사">
+                                 {copied ? <Check size={14} className="text-green-600"/> : <Copy size={14}/>}
+                             </button>
+                         </div>
+                     </div>
+                     <div className="space-y-1.5 text-slate-600">
+                         <p className="font-bold text-slate-700">2. Supabase 설정 방법</p>
+                         <p>① Supabase 대시보드 접속</p>
+                         <p>② Authentication {'>'} URL Configuration</p>
+                         <p>③ <span className="font-bold text-red-500">Site URL</span>을 위 주소로 변경</p>
+                         <p>④ <span className="font-bold text-red-500">Redirect URLs</span>에 위 주소 추가</p>
+                     </div>
+                 </div>
+             )}
+        </div>
+
       </div>
     </div>
   );

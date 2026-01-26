@@ -109,3 +109,16 @@ export interface AppSettings {
     price_gold_original: string;
     price_gold_sale: string;
 }
+
+export interface AnalyticsEvent {
+  id: string;
+  event_type: 'visit' | 'signup' | 'login' | 'click_subscription' | 'payment_success' | 'delete_account';
+  user_id?: string;
+  metadata?: {
+    is_new_visitor?: boolean;
+    tier?: string;
+    page?: string;
+    [key: string]: any;
+  };
+  created_at: string;
+}

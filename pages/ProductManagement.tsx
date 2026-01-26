@@ -1,8 +1,9 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { Plus, Trash2, Search, Save, X, FileSpreadsheet, Upload, Settings2, Building2, Tag, CheckSquare, Pencil, Lock, Zap, UserCog, LogOut, AlertOctagon, Calendar, History, Clock, Download, ArrowUpCircle, CreditCard, Award, Youtube, AlertTriangle, RefreshCw, ExternalLink, Sparkles, ChevronRight, FileUp, Check, ArrowDownCircle, DollarSign, PackageCheck } from 'lucide-react';
 import { Product, InvoiceTemplate, UserProfile, ActivityLog, Tier } from '../types';
-import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchTemplates, createTemplate, deleteTemplate, getUserProfile, getUsageStats, createProductsBulk, fetchActivityLogs, fetchAppSettings, AppSettings } from '../services/dbService';
+import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchTemplates, createTemplate, deleteTemplate, getUserProfile, getUsageStats, createProductsBulk, fetchActivityLogs, fetchAppSettings, AppSettings, trackEvent } from '../services/dbService';
 import { supabase } from '../services/supabase';
 import { Button } from '../components/Button';
 import { useAuth } from '../contexts/AuthContext';
@@ -113,6 +114,7 @@ export const ProductManagement: React.FC = () => {
       if (confirmEmail !== user?.email) { alert("일치하지 않습니다."); return; }
       try {
           if (supabase) await supabase.auth.updateUser({ data: { status: 'deleted', deleted_at: new Date().toISOString() } });
+          trackEvent('delete_account', { reason: 'user_request' });
           alert("탈퇴 처리되었습니다.");
           await signOut();
           navigate('/');

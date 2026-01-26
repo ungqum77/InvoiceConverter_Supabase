@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode, useEffect } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Home } from './pages/Home';
@@ -11,6 +11,7 @@ import { InvoiceMatcher } from './pages/InvoiceMatcher';
 import { AuthProvider } from './contexts/AuthContext';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from './components/Button';
+import { trackEvent } from './services/dbService';
 
 // --- ErrorBoundary Component ---
 interface ErrorBoundaryProps { 
@@ -22,8 +23,15 @@ interface ErrorBoundaryState {
   error: Error | null; 
 }
 
-class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   public state: ErrorBoundaryState = { hasError: false, error: null };
+  // Explicitly define props to fix type error
+  public props: Readonly<ErrorBoundaryProps>;
+
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.props = props;
+  }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
@@ -66,24 +74,42 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 }
 
+// 방문자 추적용 Wrapper
+const AnalyticsTracker: React.FC<{children: React.ReactNode}> = ({children}) => {
+    useEffect(() => {
+        const visitLogged = sessionStorage.getItem('visit_logged');
+        if (!visitLogged) {
+            const isNewVisitor = !localStorage.getItem('visited_before');
+            trackEvent('visit', { is_new_visitor: isNewVisitor, referrer: document.referrer });
+            sessionStorage.setItem('visit_logged', 'true');
+            if (isNewVisitor) {
+                localStorage.setItem('visited_before', 'true');
+            }
+        }
+    }, []);
+    return <>{children}</>;
+};
+
 const App: React.FC = () => {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <HashRouter>
-          <div className="min-h-screen bg-background-light">
-            <Navbar />
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/auth" element={<Auth />} />
-              <Route path="/products" element={<ProductManagement />} />
-              <Route path="/convert" element={<InvoiceConverter />} />
-              <Route path="/crm" element={<SalesCRM />} />
-              <Route path="/admin" element={<AdminDashboard />} />
-              <Route path="/admin/match" element={<InvoiceMatcher />} />
-            </Routes>
-          </div>
-        </HashRouter>
+        <AnalyticsTracker>
+            <HashRouter>
+            <div className="min-h-screen bg-background-light">
+                <Navbar />
+                <Routes>
+                <Route path="/" element={<Home />} />
+                <Route path="/auth" element={<Auth />} />
+                <Route path="/products" element={<ProductManagement />} />
+                <Route path="/convert" element={<InvoiceConverter />} />
+                <Route path="/crm" element={<SalesCRM />} />
+                <Route path="/admin" element={<AdminDashboard />} />
+                <Route path="/admin/match" element={<InvoiceMatcher />} />
+                </Routes>
+            </div>
+            </HashRouter>
+        </AnalyticsTracker>
       </AuthProvider>
     </ErrorBoundary>
   );

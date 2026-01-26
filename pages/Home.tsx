@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CheckCircle2, Zap, Award, Package, ShieldCheck, Sparkles, ExternalLink, TrendingUp } from 'lucide-react';
-import { fetchAppSettings, AppSettings, fetchAllTiers } from '../services/dbService';
+import { fetchAppSettings, AppSettings, fetchAllTiers, trackEvent } from '../services/dbService';
 import { Tier } from '../types';
 
 export const Home: React.FC = () => {
@@ -26,6 +26,12 @@ export const Home: React.FC = () => {
   const silverTier = getTier('silver');
   const goldTier = getTier('gold');
   const freeTier = getTier('free');
+
+  const handleSubscriptionClick = (tier: string, url: string) => {
+      trackEvent('click_subscription', { tier_id: tier });
+      if (url) window.open(url, '_blank');
+      else alert("준비 중입니다.");
+  };
 
   const PriceBox = ({ original, sale, tierId }: { original?: string, sale?: string, tierId: string }) => {
     if (loading) return <div className="h-20 w-32 bg-slate-100 animate-pulse rounded-xl mb-6"></div>;
@@ -154,7 +160,7 @@ export const Home: React.FC = () => {
                         </ul>
                         
                         <button 
-                            onClick={() => window.open(settings?.silver_subscription_url, '_blank')}
+                            onClick={() => handleSubscriptionClick('silver', settings?.silver_subscription_url || '')}
                             className="w-full py-5 bg-primary text-white rounded-2xl text-base font-[1000] shadow-xl shadow-primary/30 flex items-center justify-center gap-2 hover:bg-primary-hover transition-all"
                         >
                             실버 플랜 시작하기 <ExternalLink size={20}/>
@@ -182,7 +188,7 @@ export const Home: React.FC = () => {
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><CheckCircle2 size={20} className="text-primary shrink-0"/> 일괄 대량 제품 등록 지원</li>
                         </ul>
                         <button 
-                            onClick={() => window.open(settings?.gold_subscription_url, '_blank')}
+                            onClick={() => handleSubscriptionClick('gold', settings?.gold_subscription_url || '')}
                             className="w-full py-5 bg-slate-900 text-white rounded-2xl text-sm font-black flex items-center justify-center gap-2 shadow-xl shadow-slate-200"
                         >
                             골드 플랜 선택 <ExternalLink size={18}/>

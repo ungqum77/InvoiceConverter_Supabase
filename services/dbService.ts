@@ -1,6 +1,6 @@
 
 import { supabase } from './supabase';
-import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings } from '../types';
+import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings, AnalyticsEvent } from '../types';
 
 export type { AppSettings };
 
@@ -216,7 +216,6 @@ export const createProductsBulk = async (products: Omit<Product, 'id' | 'user_id
       purchase_cost: p.purchaseCost || 0,
       sales_price: p.salesPrice || 0,
       shipping_cost: p.shippingCost || 0,
-      // Fixed: Using camelCase property names from the Product type
       other_cost: p.otherCost || 0,
       market_fee_rate: p.marketFeeRate || 0
     }));
@@ -331,4 +330,42 @@ export const deleteSalesRecords = async (ids: string[]) => {
     const { error } = await supabase.from('sales_records').delete().in('id', ids).eq('user_id', user.id);
     if (error) throw error;
     await logActivity(user.id, 'DELETE_SALES', `${ids.length}건의 매출 기록 삭제`);
+};
+
+// --- Analytics Service (New) ---
+
+export const trackEvent = async (eventType: AnalyticsEvent['event_type'], metadata: any = {}) => {
+    if (!supabase) return;
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        await supabase.from('analytics_events').insert({
+            event_type: eventType,
+            user_id: user?.id || null, // 비회원도 가능
+            metadata: metadata
+        });
+    } catch (e) {
+        // Analytics should not block main flow
+        console.warn("Tracking failed:", e);
+    }
+};
+
+export const fetchAnalyticsStats = async (startDate: string, endDate: string) => {
+    if (!supabase) return [];
+    // 날짜 범위 필터링을 위해 시간까지 포함 (00:00:00 ~ 23:59:59)
+    const start = `${startDate}T00:00:00`;
+    const end = `${endDate}T23:59:59`;
+    
+    try {
+        const { data, error } = await supabase
+            .from('analytics_events')
+            .select('*')
+            .gte('created_at', start)
+            .lte('created_at', end);
+            
+        if (error) throw error;
+        return data as AnalyticsEvent[];
+    } catch (e) {
+        console.error("Analytics fetch error:", e);
+        return [];
+    }
 };
