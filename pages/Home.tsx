@@ -45,7 +45,7 @@ export const Home: React.FC = () => {
             )}
             <div className="flex items-baseline gap-1">
                 <span className="text-4xl font-[1000] text-slate-900 tracking-tighter">₩{sl.toLocaleString()}</span>
-                <span className="text-slate-400 text-sm font-bold">/ 월</span>
+                <span className="text-slate-400 text-sm font-bold">/ 30일</span>
             </div>
         </div>
     );
@@ -119,7 +119,7 @@ export const Home: React.FC = () => {
                             <p className="text-slate-400 text-xs font-black uppercase tracking-widest mt-1">개인 판매자 및 소규모 운영</p>
                         </div>
                         <div className="text-4xl font-[1000] text-slate-900 mb-8 min-h-[100px] flex items-center tracking-tighter">
-                            ₩0<span className="text-sm font-normal text-slate-400 ml-1">/ 월</span>
+                            ₩0<span className="text-sm font-normal text-slate-400 ml-1">/ 30일</span>
                         </div>
                         <ul className="space-y-5 mb-12 flex-1 border-t border-slate-50 pt-8">
                             <li className="flex items-center gap-4 text-sm font-bold text-slate-600"><CheckCircle2 size={20} className="text-primary shrink-0"/> 최대 제품 등록: {freeTier.max_products}개</li>

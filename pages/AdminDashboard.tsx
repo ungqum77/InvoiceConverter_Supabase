@@ -3,7 +3,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings, fetchAllTiers, updateTier } from '../services/dbService';
 import { UserProfile, ActivityLog, Tier } from '../types';
 import { Button } from '../components/Button';
-import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database } from 'lucide-react';
+import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database, CalendarPlus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, IS_CONFIG_ERROR } from '../services/supabase';
@@ -193,12 +193,22 @@ CREATE POLICY "Users can delete own sales records" ON public.sales_records FOR D
         }
     };
 
-    const extendSubscription = async (profile: UserProfile) => {
-        const currentEnd = profile.subscription_end_date ? new Date(profile.subscription_end_date) : new Date();
-        const newEnd = new Date(currentEnd);
-        newEnd.setDate(newEnd.getDate() + 30);
+    const extendSubscription = async (profile: UserProfile, days: number) => {
+        const now = new Date();
+        let baseDate = now;
         
-        const logMsg = `관리자가 사용자(${profile.email})의 구독을 1개월 연장했습니다. (${newEnd.toLocaleDateString()} 까지)`;
+        // 현재 구독 종료일이 미래라면 해당 날짜를 기준으로 연장, 이미 지났거나 없다면 오늘부터 시작
+        if (profile.subscription_end_date) {
+            const currentEnd = new Date(profile.subscription_end_date);
+            if (currentEnd > now) {
+                baseDate = currentEnd;
+            }
+        }
+        
+        const newEnd = new Date(baseDate);
+        newEnd.setDate(newEnd.getDate() + days);
+        
+        const logMsg = `관리자가 사용자(${profile.email})의 구독을 ${days}일 연장했습니다. (${newEnd.toLocaleDateString()} 까지)`;
         
         await handleUpdateUser(profile.id, {
             subscription_end_date: newEnd.toISOString(),
@@ -476,11 +486,18 @@ CREATE POLICY "Users can delete own sales records" ON public.sales_records FOR D
                                         <td className="px-4 py-4">
                                             <div className="flex justify-center gap-2">
                                                 <button 
-                                                    onClick={() => extendSubscription(p)}
-                                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 font-bold border border-indigo-200 transition-colors"
-                                                    title="구독 1개월(30일) 연장"
+                                                    onClick={() => extendSubscription(p, 1)}
+                                                    className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 text-slate-600 rounded-md hover:bg-slate-100 font-bold border border-slate-200 transition-colors text-xs"
+                                                    title="구독 1일 연장"
                                                 >
-                                                    <Clock3 size={14} /> +1개월
+                                                    <CalendarPlus size={14} /> +1일
+                                                </button>
+                                                <button 
+                                                    onClick={() => extendSubscription(p, 30)}
+                                                    className="flex items-center gap-1.5 px-2 py-1.5 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 font-bold border border-indigo-200 transition-colors text-xs"
+                                                    title="구독 30일 연장"
+                                                >
+                                                    <Clock3 size={14} /> +30일
                                                 </button>
                                             </div>
                                         </td>

@@ -43,8 +43,6 @@ export const fetchAllTiers = async (): Promise<Tier[]> => {
         try {
             const { data, error } = await supabase.from('tiers').select('*').order('max_products', { ascending: true });
             if (error) return Object.values(DEFAULT_TIERS);
-            
-            // Merge with DB data but ensure defaults if columns missing
             return (data || []).map((t: any) => ({
                 ...DEFAULT_TIERS[t.id],
                 ...t
@@ -98,7 +96,6 @@ export const updateAppSettings = async (settings: AppSettings) => {
     } else { localStorage.setItem('demo_settings', JSON.stringify(settings)); }
 };
 
-// --- Activity Logs ---
 export const logActivity = async (userId: string, actionType: string, description: string) => {
   if (supabase) {
     try { await supabase.from('activity_logs').insert({ user_id: userId, action_type: actionType, description: description }); } catch (e) {}
@@ -119,17 +116,14 @@ export const fetchAllActivityLogs = async (): Promise<ActivityLog[]> => {
     return [];
 };
 
-// --- User Profile ---
 export const getUserProfile = async (userId: string): Promise<UserProfile | null> => {
   if (supabase) {
     try {
         const { data, error } = await supabase.from('profiles').select('*, tier:tiers(*)').eq('id', userId).single();
         if (error) throw error;
-        // Merge DB tier data with defaults to ensure all fields exist
         const dbTier = data.tier;
         const defaultTier = DEFAULT_TIERS[data.tier_id] || DEFAULT_TIERS['free'];
         const effectiveTier = dbTier ? { ...defaultTier, ...dbTier } : defaultTier;
-        
         return { ...data, tier: effectiveTier };
     } catch (e) { return { id: userId, email: '', tier_id: 'free', role: 'user', tier: DEFAULT_TIERS['free'] }; }
   }
@@ -157,7 +151,6 @@ export const getUsageStats = async (userId: string) => {
   return { productCount: 0, templateCount: 0 };
 };
 
-// --- Templates ---
 export const fetchTemplates = async (): Promise<InvoiceTemplate[]> => {
   if (supabase) {
     const { data, error } = await supabase.from('invoice_templates').select('*').order('created_at');
@@ -180,7 +173,6 @@ export const deleteTemplate = async (id: string): Promise<void> => {
   if (supabase) await supabase.from('invoice_templates').delete().eq('id', id);
 };
 
-// --- Products (Updated with Financials) ---
 export const fetchProducts = async (): Promise<Product[]> => {
   if (supabase) {
     const { data, error } = await supabase.from('products').select('*').order('created_at');
@@ -200,7 +192,6 @@ export const createProduct = async (product: Omit<Product, 'id' | 'user_id'>): P
     use_additional_name: product.useAdditionalName, 
     supplier_name: product.supplierName, 
     template_id: product.templateId,
-    // Financials
     purchase_cost: product.purchaseCost,
     sales_price: product.salesPrice,
     shipping_cost: product.shippingCost,
@@ -222,10 +213,10 @@ export const createProductsBulk = async (products: Omit<Product, 'id' | 'user_id
       use_additional_name: p.useAdditionalName, 
       supplier_name: p.supplierName, 
       template_id: p.templateId,
-      // Bulk financials (Optional in CSV, default 0)
       purchase_cost: p.purchaseCost || 0,
       sales_price: p.salesPrice || 0,
       shipping_cost: p.shippingCost || 0,
+      // Fixed: Using camelCase property names from the Product type
       other_cost: p.otherCost || 0,
       market_fee_rate: p.marketFeeRate || 0
     }));
@@ -241,13 +232,11 @@ export const updateProduct = async (id: string, product: Partial<Product>): Prom
     if (product.useAdditionalName !== undefined) updates.use_additional_name = product.useAdditionalName;
     if (product.supplierName !== undefined) updates.supplier_name = product.supplierName;
     if (product.templateId !== undefined) updates.template_id = product.templateId;
-    // Financials
     if (product.purchaseCost !== undefined) updates.purchase_cost = product.purchaseCost;
     if (product.salesPrice !== undefined) updates.sales_price = product.salesPrice;
     if (product.shippingCost !== undefined) updates.shipping_cost = product.shippingCost;
     if (product.otherCost !== undefined) updates.other_cost = product.otherCost;
     if (product.marketFeeRate !== undefined) updates.market_fee_rate = product.marketFeeRate;
-
     const { data, error } = await supabase.from('products').update(updates).eq('id', id).select().single();
     if (error) throw error;
     return mapProductFromDB(data);
@@ -256,7 +245,6 @@ export const deleteProduct = async (id: string): Promise<void> => {
   if (supabase) await supabase.from('products').delete().eq('id', id);
 };
 
-// --- Sales & CRM ---
 export interface SalesSaveResult {
     success: boolean;
     savedCount: number;
@@ -269,24 +257,11 @@ export interface SalesSaveResult {
 export const deleteOldestSalesRecords = async (count: number) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
-
-    // Find oldest IDs
-    const { data, error } = await supabase
-        .from('sales_records')
-        .select('id')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: true })
-        .limit(count);
-    
+    const { data, error } = await supabase.from('sales_records').select('id').eq('user_id', user.id).order('created_at', { ascending: true }).limit(count);
     if (error) throw error;
     if (!data || data.length === 0) return;
-
     const idsToDelete = data.map(d => d.id);
-    const { error: delError } = await supabase
-        .from('sales_records')
-        .delete()
-        .in('id', idsToDelete);
-    
+    const { error: delError } = await supabase.from('sales_records').delete().in('id', idsToDelete);
     if (delError) throw delError;
     await logActivity(user.id, 'ROTATE_SALES', `저장 공간 확보를 위해 오래된 데이터 ${idsToDelete.length}건 자동 삭제`);
 };
@@ -295,65 +270,40 @@ export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'create
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
 
-    // 1. Check Limits based on User's Tier
     const profile = await getUserProfile(user.id);
-    
-    // Default fallback limits if not set in DB
     const tierLimit = profile?.tier?.max_crm_count ?? DEFAULT_TIERS[profile?.tier_id || 'free'].max_crm_count ?? 20;
-    
-    // For Gold/Admin, treat as unlimited if high number
     const effectiveLimit = tierLimit > 100000 ? 999999 : tierLimit;
 
-    const { count: currentCount, error: countError } = await supabase
-        .from('sales_records')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id);
-    
+    const { count: currentCount, error: countError } = await supabase.from('sales_records').select('*', { count: 'exact', head: true }).eq('user_id', user.id);
     if (countError) throw countError;
     
     const incomingCount = records.length;
     const projectedCount = (currentCount || 0) + incomingCount;
 
     if (projectedCount > effectiveLimit) {
-        return {
-            success: false,
-            savedCount: 0,
-            skippedCount: 0,
-            skippedItems: [],
-            error: 'LIMIT_REACHED',
-            countToDelete: projectedCount - effectiveLimit
-        };
+        return { success: false, savedCount: 0, skippedCount: 0, skippedItems: [], error: 'LIMIT_REACHED', countToDelete: projectedCount - effectiveLimit };
     }
 
-    // 2. Extract Order IDs to check for duplicates
     const inputOrderIds = records.map(r => r.order_id).filter(Boolean) as string[];
     let newRecords = records;
     const skipped: any[] = [];
 
     if (inputOrderIds.length > 0) {
-        const { data: existingData, error: fetchError } = await supabase
-            .from('sales_records')
-            .select('order_id, supplier_name, product_name')
-            .in('order_id', inputOrderIds)
-            .eq('user_id', user.id);
-            
+        // 기존에 등록된 주문들 중 주문번호가 겹치는 것을 미리 가져옴
+        const { data: existingData, error: fetchError } = await supabase.from('sales_records').select('order_id, supplier_name, product_name').in('order_id', inputOrderIds).eq('user_id', user.id);
         if (fetchError) throw fetchError;
 
         if (existingData && existingData.length > 0) {
             newRecords = [];
             for (const rec of records) {
-                // Duplicate Criteria: Order ID + Supplier + Product Name match
+                // 중복 체크: 주문번호 + 발주처 + 제품명 세 가지가 모두 같으면 중복으로 간주
                 const isDuplicate = existingData.some((existing: any) => 
                     existing.order_id === rec.order_id && 
                     existing.supplier_name === rec.supplier_name &&
                     existing.product_name === rec.product_name
                 );
-
-                if (isDuplicate) {
-                    skipped.push(rec);
-                } else {
-                    newRecords.push(rec);
-                }
+                if (isDuplicate) skipped.push(rec);
+                else newRecords.push(rec);
             }
         }
     }
@@ -370,15 +320,7 @@ export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'create
 export const fetchSalesRecords = async (startDate: string, endDate: string): Promise<SalesRecord[]> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return [];
-    
-    const { data, error } = await supabase
-        .from('sales_records')
-        .select('*')
-        .eq('user_id', user.id)
-        .gte('order_date', startDate)
-        .lte('order_date', endDate)
-        .order('order_date', { ascending: false });
-        
+    const { data, error } = await supabase.from('sales_records').select('*').eq('user_id', user.id).gte('order_date', startDate).lte('order_date', endDate).order('order_date', { ascending: false });
     if (error) throw error;
     return data || [];
 };
@@ -386,7 +328,6 @@ export const fetchSalesRecords = async (startDate: string, endDate: string): Pro
 export const deleteSalesRecords = async (ids: string[]) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
-    
     const { error } = await supabase.from('sales_records').delete().in('id', ids).eq('user_id', user.id);
     if (error) throw error;
     await logActivity(user.id, 'DELETE_SALES', `${ids.length}건의 매출 기록 삭제`);
