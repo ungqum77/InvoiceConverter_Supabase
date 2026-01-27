@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
-import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube, DollarSign, Calendar, FolderInput, HardDrive, FolderTree, ChevronRight, Copy, Check, FolderOpen } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube, DollarSign, Calendar, FolderInput, HardDrive, FolderTree, ChevronRight, Check, FolderOpen } from 'lucide-react';
 import { Button } from '../components/Button';
 import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords, deleteOldestSalesRecords, SalesSaveResult } from '../services/dbService';
 import { InvoiceRow, MatchedOrder, Product, ColumnMapping, SalesRecord } from '../types';
@@ -54,7 +54,6 @@ export const InvoiceConverter: React.FC = () => {
 
   // Folder Save Success Modal State
   const [savedFolderInfo, setSavedFolderInfo] = useState<{ name: string } | null>(null);
-  const [isCopied, setIsCopied] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -337,14 +336,6 @@ export const InvoiceConverter: React.FC = () => {
       } catch (e: any) { if (e.name !== 'AbortError') alert("폴더 저장 오류: " + e.message); } finally { setIsFolderSaving(false); }
   };
 
-  const copyFolderName = () => {
-    if (savedFolderInfo?.name) {
-        navigator.clipboard.writeText(savedFolderInfo.name);
-        setIsCopied(true);
-        setTimeout(() => setIsCopied(false), 2000);
-    }
-  };
-
   if (!user) return <div className="p-20 text-center"><Lock className="mx-auto mb-4" /><Button onClick={() => navigate('/auth')}>로그인 필요</Button></div>;
 
   return (
@@ -439,17 +430,10 @@ export const InvoiceConverter: React.FC = () => {
                         <code className="flex-1 bg-white border border-slate-200 px-3 py-2.5 rounded-lg text-sm font-bold text-slate-800 break-all shadow-sm">
                             {savedFolderInfo.name}
                         </code>
-                        <button 
-                            onClick={copyFolderName}
-                            className={`p-2.5 rounded-lg border transition-all ${isCopied ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                            title="폴더명 복사"
-                        >
-                            {isCopied ? <Check size={18} /> : <Copy size={18} />}
-                        </button>
                     </div>
                     <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
                         * 보안상 전체 경로는 표시되지 않습니다.<br/>
-                        * 폴더명을 복사하여 파일 탐색기에서 검색하세요.
+                        * 파일 탐색기에서 해당 폴더를 확인해주세요.
                     </p>
                 </div>
 

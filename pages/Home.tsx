@@ -65,7 +65,7 @@ export const Home: React.FC = () => {
             <div className="mx-auto max-w-3xl text-center">
               <h1 className="text-[44px] font-[1000] tracking-tighter text-slate-900 sm:text-[68px] leading-[1.05] mb-8">
                 엑셀 주문서를<br/>
-                <span className="text-primary italic">3초 만에 송장으로.</span>
+                <span className="text-primary italic">3초 만에 택배송장으로.</span>
               </h1>
               <p className="text-slate-500 font-bold max-w-2xl mx-auto mb-12 text-lg">
                 복잡한 주문 리스트를 제품 ID 기반으로 자동 분류하고,<br className="hidden sm:block"/> 각 택배사 양식에 맞춰 엑셀 파일을 즉시 생성해 드립니다.
