@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
-import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube, DollarSign, Calendar, FolderInput, HardDrive, FolderTree, ChevronRight } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube, DollarSign, Calendar, FolderInput, HardDrive, FolderTree, ChevronRight, Copy, Check, FolderOpen } from 'lucide-react';
 import { Button } from '../components/Button';
 import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords, deleteOldestSalesRecords, SalesSaveResult } from '../services/dbService';
 import { InvoiceRow, MatchedOrder, Product, ColumnMapping, SalesRecord } from '../types';
@@ -51,6 +51,10 @@ export const InvoiceConverter: React.FC = () => {
   });
   const [financialSummary, setFinancialSummary] = useState<Record<string, number>>({});
   const [saveToCrm, setSaveToCrm] = useState(true);
+
+  // Folder Save Success Modal State
+  const [savedFolderInfo, setSavedFolderInfo] = useState<{ name: string } | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -234,6 +238,7 @@ export const InvoiceConverter: React.FC = () => {
       setIsFolderSaving(true);
       try {
           const rootHandle = await (window as any).showDirectoryPicker();
+          const folderName = rootHandle.name; // 저장된 폴더명 캡처
           const { fileGroups, templateMap, salesRecordsToSave } = await getProcessingData();
           const now = new Date();
           const yearDir = await rootHandle.getDirectoryHandle(String(now.getFullYear()), { create: true });
@@ -326,8 +331,18 @@ export const InvoiceConverter: React.FC = () => {
           await sw.close();
 
           await saveCrmDataOnly(salesRecordsToSave);
-          alert("저장 완료! 중복 주문은 자동으로 제외되었습니다.");
+          
+          // 모달 상태 업데이트 (alert 제거)
+          setSavedFolderInfo({ name: folderName });
       } catch (e: any) { if (e.name !== 'AbortError') alert("폴더 저장 오류: " + e.message); } finally { setIsFolderSaving(false); }
+  };
+
+  const copyFolderName = () => {
+    if (savedFolderInfo?.name) {
+        navigator.clipboard.writeText(savedFolderInfo.name);
+        setIsCopied(true);
+        setTimeout(() => setIsCopied(false), 2000);
+    }
   };
 
   if (!user) return <div className="p-20 text-center"><Lock className="mx-auto mb-4" /><Button onClick={() => navigate('/auth')}>로그인 필요</Button></div>;
@@ -389,14 +404,62 @@ export const InvoiceConverter: React.FC = () => {
                     <label htmlFor="saveCrm" className="text-xs font-bold text-blue-800 cursor-pointer">매출 내역을 CRM(통계)에 저장하기</label>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <Button onClick={downloadExcel} icon={<Download size={16}/>} variant="secondary" isLoading={isDownloading} className="w-full">ZIP 다운로드</Button>
-                    <Button onClick={handleDirectFolderSave} icon={<HardDrive size={16}/>} isLoading={isFolderSaving} className="w-full bg-indigo-600 text-white">폴더 자동 저장 (중복 방지)</Button>
+                    <div className="space-y-2">
+                        <Button onClick={downloadExcel} icon={<Download size={16}/>} variant="secondary" isLoading={isDownloading} className="w-full">ZIP 다운로드</Button>
+                        <p className="text-[10px] text-slate-400 text-center">다운로드 후 '폴더 열기' 가능</p>
+                    </div>
+                    <div className="space-y-2">
+                        <Button onClick={handleDirectFolderSave} icon={<HardDrive size={16}/>} isLoading={isFolderSaving} className="w-full bg-indigo-600 text-white">폴더 자동 저장 (중복 방지)</Button>
+                        <p className="text-[10px] text-slate-400 text-center">지정된 폴더에 즉시 저장 (폴더 열기 불가)</p>
+                    </div>
                 </div>
             </div>
             <div className="flex justify-center"><Button variant="ghost" size="sm" onClick={() => setStep(1)}>처음으로</Button></div>
           </div>
         )}
       </div>
+
+      {/* 저장 완료 모달 (커스텀) */}
+      {savedFolderInfo && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl m-4 transform scale-100 transition-transform">
+                <div className="flex flex-col items-center text-center mb-6">
+                    <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mb-3">
+                        <Check className="text-green-600 w-8 h-8" strokeWidth={3} />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-900">저장 완료!</h3>
+                    <p className="text-xs text-slate-500 mt-1">파일이 안전하게 저장되었습니다.</p>
+                </div>
+
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 mb-4">
+                    <div className="flex items-center gap-2 mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        <FolderOpen size={14} /> 저장된 폴더명
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <code className="flex-1 bg-white border border-slate-200 px-3 py-2.5 rounded-lg text-sm font-bold text-slate-800 break-all shadow-sm">
+                            {savedFolderInfo.name}
+                        </code>
+                        <button 
+                            onClick={copyFolderName}
+                            className={`p-2.5 rounded-lg border transition-all ${isCopied ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                            title="폴더명 복사"
+                        >
+                            {isCopied ? <Check size={18} /> : <Copy size={18} />}
+                        </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                        * 보안상 전체 경로는 표시되지 않습니다.<br/>
+                        * 폴더명을 복사하여 파일 탐색기에서 검색하세요.
+                    </p>
+                </div>
+
+                <Button className="w-full" onClick={() => setSavedFolderInfo(null)}>
+                    확인
+                </Button>
+            </div>
+        </div>
+      )}
+
       <YouTubeEmbed url={appSettings.youtube_tutorial_convert} title="송장 변환 가이드" />
     </div>
   );
