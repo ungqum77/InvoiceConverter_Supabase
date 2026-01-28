@@ -3,11 +3,11 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings, fetchAllTiers, updateTier, fetchAnalyticsStats, trackEvent, fetchBlogPosts, createBlogPost, updateBlogPost, deleteBlogPost, fetchUserGuides, createUserGuide, updateUserGuide, deleteUserGuide } from '../services/dbService';
 import { UserProfile, ActivityLog, Tier, AnalyticsEvent, BlogPost, UserGuide } from '../types';
 import { Button } from '../components/Button';
-import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database, CalendarPlus, BarChart2, PieChart, Activity, MousePointer2, BookOpen, PenTool, Eye, EyeOff, Trash2, Save, Book } from 'lucide-react';
+import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database, CalendarPlus, BarChart2, PieChart as PieChartIcon, Activity, MousePointer2, BookOpen, PenTool, Eye, EyeOff, Trash2, Save, Book, Globe } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, IS_CONFIG_ERROR } from '../services/supabase';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 
 type SortKey = 'email' | 'tier' | 'role' | 'subscription' | 'created_at';
 type SortDirection = 'asc' | 'desc';
@@ -16,6 +16,8 @@ interface SortConfig {
     key: SortKey;
     direction: SortDirection;
 }
+
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6'];
 
 const YouTubeEmbed = ({ url, title }: { url: string; title: string }) => {
     if (!url) return null;
@@ -63,7 +65,6 @@ export const AdminDashboard: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [showSolution, setShowSolution] = useState(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'created_at', direction: 'desc' });
     
     // Analytics Filters
     const [analyticsStart, setAnalyticsStart] = useState(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)); // 1 week ago
@@ -181,7 +182,6 @@ create policy "Admins full access posts"
         } catch (e: any) {
             console.error("Load Error:", e);
             setErrorMsg(e.message || "데이터 로드 중 오류가 발생했습니다.");
-            // 에러 발생 시 자동으로 솔루션 창 표시 (테이블 없음 에러 등)
             if ((activeTab === 'guides' || activeTab === 'blog') && e.message?.includes('relation')) {
                 setShowSolution(true);
             }
@@ -190,7 +190,7 @@ create policy "Admins full access posts"
         }
     };
     
-    // ... [Previous handler functions: handleUpdateUser, handleSaveSettings, extendSubscription] ...
+    // ... [Content Handlers remain the same] ...
     const handleUpdateUser = async (userId: string, updates: any, logMsg?: string) => {
         try {
             setLoading(true);
@@ -223,7 +223,6 @@ create policy "Admins full access posts"
         await handleUpdateUser(profile.id, { subscription_end_date: newEnd.toISOString(), subscription_start_date: profile.subscription_start_date || new Date().toISOString() }, logMsg);
     };
 
-    // Generic Content Handlers (Blog & Guides)
     const handleOpenContentEditor = (item?: any) => {
         const draftKey = `draft_${activeTab}_${item?.id || 'new'}`;
         const savedDraft = localStorage.getItem(draftKey);
@@ -300,6 +299,8 @@ create policy "Admins full access posts"
         const payments = analyticsData.filter(e => e.event_type === 'payment_success').length;
         const conversionRate = visits > 0 ? ((signups / visits) * 100).toFixed(1) : '0';
         const clickRate = visits > 0 ? ((subClicks / visits) * 100).toFixed(1) : '0';
+        
+        // Date Aggregation
         const dateMap: Record<string, any> = {};
         analyticsData.forEach(e => {
             const date = new Date(e.created_at).toLocaleDateString();
@@ -309,7 +310,44 @@ create policy "Admins full access posts"
             if (e.event_type === 'click_subscription') dateMap[date].clicks++;
         });
         const chartData = Object.values(dateMap).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        return { signups, visits, newVisits, subClicks, payments, conversionRate, clickRate, chartData };
+
+        // Referrer (Traffic Source) Aggregation
+        const sourceMap: Record<string, number> = { 'Direct': 0 };
+        analyticsData.forEach(e => {
+            if (e.event_type === 'visit') {
+                let source = 'Direct';
+                const metaSource = e.metadata?.source; // utm_source
+                const metaRef = e.metadata?.referrer;
+
+                if (metaSource) {
+                    source = String(metaSource);
+                } else if (metaRef) {
+                    try {
+                        const url = new URL(metaRef);
+                        const host = url.hostname.replace('www.', '').toLowerCase();
+                        if (host.includes('google')) source = 'Google';
+                        else if (host.includes('naver')) source = 'Naver';
+                        else if (host.includes('daum') || host.includes('kakao')) source = 'Daum/Kakao';
+                        else if (host.includes('facebook') || host.includes('instagram')) source = 'Social';
+                        else if (host.includes('youtube')) source = 'Youtube';
+                        else source = host;
+                    } catch {
+                        source = 'Other';
+                    }
+                }
+                
+                // 앱 내부 이동이나 새로고침으로 인한 referrer는 제외하거나 Direct로 처리
+                if (source.includes(window.location.hostname)) source = 'Direct';
+
+                sourceMap[source] = (sourceMap[source] || 0) + 1;
+            }
+        });
+        const trafficData = Object.entries(sourceMap)
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value)
+            .filter(i => i.value > 0);
+
+        return { signups, visits, newVisits, subClicks, payments, conversionRate, clickRate, chartData, trafficData };
     }, [analyticsData]);
 
     if (authLoading) return <div className="p-10 text-center">인증 확인 중...</div>;
@@ -334,7 +372,7 @@ create policy "Admins full access posts"
                 </div>
             </div>
 
-            {/* SQL 패치 가이드 (가이드/블로그 탭에서 에러 발생 시 또는 요청 시 노출) */}
+            {/* SQL 패치 가이드 */}
             {(showSolution) && (
                 <div className="mb-6 bg-slate-900 rounded-xl p-6 border border-slate-700 shadow-2xl animate-fade-in relative">
                     <button onClick={() => setShowSolution(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X size={18}/></button>
@@ -344,10 +382,6 @@ create policy "Admins full access posts"
                             <Copy size={12} /> 코드 복사
                         </button>
                     </div>
-                    <p className="text-slate-400 text-xs mb-4">
-                        * Supabase 대시보드 {'>'} SQL Editor {'>'} New Query 에 아래 코드를 붙여넣고 Run 하세요. <br/>
-                        * 테이블이 생성되어야 가이드 및 블로그 기능이 정상 작동합니다.
-                    </p>
                     <pre className="text-[11px] font-mono text-slate-300 bg-black/40 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-800 h-64 overflow-y-auto custom-scrollbar">{SQL_SOLUTION}</pre>
                 </div>
             )}
@@ -366,6 +400,7 @@ create policy "Admins full access posts"
                         <p className="text-slate-500 font-medium">로딩 중...</p>
                     </div>
                 ) : (activeTab === 'blog' || activeTab === 'guides') ? (
+                    // ... [Blog/Guides UI remains the same] ...
                     <div className="p-8">
                         {isEditingContent ? (
                             <div>
@@ -480,12 +515,19 @@ create policy "Admins full access posts"
                                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Activity className="text-primary"/> 비즈니스 인사이트</h3>
                                 <p className="text-sm text-slate-500">방문자 행동 및 전환율 분석</p>
                             </div>
-                            <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200">
-                                <Calendar size={16} className="text-slate-400 ml-2"/>
-                                <input type="date" value={analyticsStart} onChange={e => setAnalyticsStart(e.target.value)} className="bg-transparent text-sm border-none focus:ring-0 text-slate-700"/>
-                                <span className="text-slate-300">~</span>
-                                <input type="date" value={analyticsEnd} onChange={e => setAnalyticsEnd(e.target.value)} className="bg-transparent text-sm border-none focus:ring-0 text-slate-700"/>
-                                <button onClick={() => loadData()} className="p-1.5 bg-white border rounded hover:bg-slate-50"><RefreshCw size={14}/></button>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 w-full md:w-auto">
+                                <div className="flex items-center gap-2 w-full sm:w-auto">
+                                    <Calendar size={16} className="text-slate-400 hidden sm:block shrink-0"/>
+                                    <div className="flex items-center gap-2 flex-1 sm:flex-none justify-center">
+                                        <input type="date" value={analyticsStart} onChange={e => setAnalyticsStart(e.target.value)} className="bg-white rounded border border-slate-200 text-xs px-2 py-1.5 focus:ring-2 focus:ring-primary/20 outline-none text-slate-600 w-full sm:w-auto"/>
+                                        <span className="text-slate-400">~</span>
+                                        <input type="date" value={analyticsEnd} onChange={e => setAnalyticsEnd(e.target.value)} className="bg-white rounded border border-slate-200 text-xs px-2 py-1.5 focus:ring-2 focus:ring-primary/20 outline-none text-slate-600 w-full sm:w-auto"/>
+                                    </div>
+                                </div>
+                                <button onClick={() => loadData()} className="w-full sm:w-auto px-3 py-1.5 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 text-xs font-bold flex items-center justify-center gap-1 shadow-sm">
+                                    <RefreshCw size={14} className={loading ? "animate-spin" : ""}/> 
+                                    <span>조회</span>
+                                </button>
                             </div>
                         </div>
 
@@ -514,8 +556,8 @@ create policy "Admins full access posts"
                         </div>
                         
                         {/* Charts */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-[300px]">
-                            <div className="bg-white p-4 rounded-xl border border-slate-200">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 h-[300px]">
                                 <h4 className="text-sm font-bold text-slate-700 mb-4">일별 트래픽 추이</h4>
                                 <ResponsiveContainer width="100%" height="90%">
                                     <AreaChart data={analyticsMetrics.chartData}>
@@ -533,7 +575,7 @@ create policy "Admins full access posts"
                                     </AreaChart>
                                 </ResponsiveContainer>
                             </div>
-                            <div className="bg-white p-4 rounded-xl border border-slate-200">
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 h-[300px]">
                                 <h4 className="text-sm font-bold text-slate-700 mb-4">주요 이벤트 발생 추이</h4>
                                 <ResponsiveContainer width="100%" height="90%">
                                     <BarChart data={analyticsMetrics.chartData}>
@@ -547,9 +589,37 @@ create policy "Admins full access posts"
                                     </BarChart>
                                 </ResponsiveContainer>
                             </div>
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 h-[300px] lg:col-span-2">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2"><Globe size={16}/> 유입 경로 분석 (Referrer)</h4>
+                                </div>
+                                <div className="flex h-full">
+                                    <ResponsiveContainer width="100%" height="90%">
+                                        <PieChart>
+                                            <Pie
+                                                data={analyticsMetrics.trafficData}
+                                                cx="50%"
+                                                cy="50%"
+                                                labelLine={false}
+                                                label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                                                outerRadius={80}
+                                                fill="#8884d8"
+                                                dataKey="value"
+                                            >
+                                                {analyticsMetrics.trafficData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip contentStyle={{fontSize: '12px'}} />
+                                            <Legend wrapperStyle={{fontSize: '12px'}} />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 ) : activeTab === 'logs' ? (
+                     // ... [Logs UI remains the same] ...
                      <div className="p-4 overflow-x-auto">
                         <table className="w-full text-left text-sm">
                            <thead className="bg-slate-50 border-b text-slate-500 text-xs font-bold uppercase tracking-wider">
@@ -568,6 +638,7 @@ create policy "Admins full access posts"
                        </table>
                    </div>
                 ) : activeTab === 'settings' ? (
+                    // ... [Settings UI remains the same] ...
                     <div className="p-8">
                         <div className="mb-6 pb-6 border-b border-slate-100">
                             <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-2"><Settings size={20} className="text-primary"/> 시스템 설정 관리</h3>
@@ -637,6 +708,7 @@ create policy "Admins full access posts"
                         </form>
                     </div>
                 ) : (
+                    // ... [User Table UI remains the same] ...
                     <div className="p-4 overflow-x-auto">
                         <div className="mb-4 flex gap-2">
                              <div className="relative flex-1 max-w-md">

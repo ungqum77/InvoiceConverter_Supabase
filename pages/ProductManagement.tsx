@@ -157,9 +157,21 @@ export const ProductManagement: React.FC = () => {
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSku || !newName || !newSupplier || !selectedTemplateId) return;
+
+    // [중복 체크] SKU 중복 확인
+    const normalizedSku = newSku.trim();
+    const isDuplicateSku = products.some(p => 
+        p.sku === normalizedSku && p.id !== editingProductId
+    );
+
+    if (isDuplicateSku) {
+        alert(`이미 존재하는 SKU입니다: ${normalizedSku}\n다른 SKU를 입력해주세요.`);
+        return;
+    }
+
     try {
       const payload = { 
-        sku: newSku, 
+        sku: normalizedSku, 
         name: newName, 
         supplierName: newSupplier, 
         templateId: selectedTemplateId,
@@ -211,7 +223,15 @@ export const ProductManagement: React.FC = () => {
           if (data.length > 1 && data[1].length > 0) {
               outputHeaders = data[1].map(h => h ? String(h) : '');
           }
-          const name = file.name.replace(/\.[^/.]+$/, "");
+          const name = file.name.replace(/\.[^/.]+$/, "").trim();
+
+          // [중복 체크] 송장 양식 이름 중복 확인
+          if (templates.some(t => t.name === name)) {
+              alert(`이미 존재하는 송장 양식 이름입니다: ${name}\n파일명을 변경하거나 기존 양식을 삭제 후 다시 시도해주세요.`);
+              e.target.value = ''; // Reset input
+              return;
+          }
+
           createTemplate({ name, headers: inputHeaders, outputHeaders })
             .then(() => {
                 alert(`양식 등록 완료!`);
@@ -224,7 +244,7 @@ export const ProductManagement: React.FC = () => {
     e.target.value = '';
   };
 
-  // Bulk Upload updated to include financials
+  // Bulk Upload updated to include financials and check for SKU duplicates
   const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -242,41 +262,82 @@ export const ProductManagement: React.FC = () => {
         const data = XLSX.utils.sheet_to_json(sheet as any) as any[];
         
         const templateMap = new Map<string, string>(templates.map(t => [t.name.trim(), t.id]));
+        const existingSkus = new Set(products.map(p => p.sku));
+        const newSkusInFile = new Set<string>();
+        
         const payload: Omit<Product, 'id' | 'user_id'>[] = [];
+        const errors: string[] = []; // For critical errors (missing template etc)
+        const duplicates: string[] = []; // For duplicates
 
         data.forEach((row, idx) => {
+          const rowNum = idx + 2;
           const sku = String(row['SKU(필수)'] || row['SKU'] || '').trim();
           const name = String(row['제품명(필수)'] || row['제품명'] || '').trim();
           const supplier = String(row['발주처(필수)'] || row['발주처'] || '').trim();
           const tplName = String(row['적용양식명(필수)'] || row['적용양식명'] || '').trim();
           
+          // 빈 행 스킵
+          if (!sku && !name && !supplier && !tplName) return;
+
+          // 필수값 검증 및 에러 메시지 생성
+          if (!sku) { errors.push(`[${rowNum}행] ${name || '제품명 없음'}: SKU 누락`); return; }
+          if (!name) { errors.push(`[${rowNum}행] SKU(${sku}): 제품명 누락`); return; }
+          if (!supplier) { errors.push(`[${rowNum}행] ${name}: 발주처 누락`); return; }
+          if (!tplName) { errors.push(`[${rowNum}행] ${name}: 적용양식명 누락`); return; }
+
           const tplId = templateMap.get(tplName);
-          
-          if (sku && name && supplier && tplId) {
-            payload.push({ 
-                sku, name, supplierName: supplier, templateId: tplId,
-                additionalName: String(row['대체제품명'] || '').trim() || undefined,
-                useAdditionalName: ['Y', 'YES', '1'].includes(String(row['대체제품명사용'] || '').trim().toUpperCase()),
-                salesPrice: Number(row['판매가'] || 0),
-                purchaseCost: Number(row['매입가'] || 0),
-                shippingCost: Number(row['배송비'] || 0),
-                otherCost: Number(row['기타비용'] || 0),
-                marketFeeRate: Number(row['수수료율'] || 0)
-            });
+          if (!tplId) {
+              errors.push(`[${rowNum}행] ${name}: 등록되지 않은 양식명 '${tplName}'`);
+              return;
           }
+
+          // 중복 체크
+          if (existingSkus.has(sku)) {
+              duplicates.push(`${name} (${sku}): 이미 등록됨`);
+              return;
+          }
+          if (newSkusInFile.has(sku)) {
+              duplicates.push(`${name} (${sku}): 파일 내 중복`);
+              return;
+          }
+
+          newSkusInFile.add(sku);
+          payload.push({ 
+              sku, name, supplierName: supplier, templateId: tplId,
+              additionalName: String(row['대체제품명'] || '').trim() || undefined,
+              useAdditionalName: ['Y', 'YES', '1'].includes(String(row['대체제품명사용'] || '').trim().toUpperCase()),
+              salesPrice: Number(row['판매가'] || 0),
+              purchaseCost: Number(row['매입가'] || 0),
+              shippingCost: Number(row['배송비'] || 0),
+              otherCost: Number(row['기타비용'] || 0),
+              marketFeeRate: Number(row['수수료율'] || 0)
+          });
         });
 
-        if (payload.length > 0) {
-          await createProductsBulk(payload);
-          alert(`${payload.length}개의 제품 등록 완료`);
-          loadData();
-          setIsBulkModalOpen(false);
+        let confirmMsg = '';
+
+        if (errors.length > 0) {
+            confirmMsg += `⛔ [입력 오류 ${errors.length}건] (등록 제외)\n${errors.slice(0,3).join('\n')}${errors.length>3 ? `\n...외 ${errors.length-3}건` : ''}\n\n`;
+        }
+        if (duplicates.length > 0) {
+            confirmMsg += `⚠️ [중복 데이터 ${duplicates.length}건] (등록 제외)\n${duplicates.slice(0,3).join('\n')}${duplicates.length>3 ? `\n...외 ${duplicates.length-3}건` : ''}\n\n`;
+        }
+
+        if (payload.length === 0) {
+            alert(confirmMsg + "등록 가능한 유효한 데이터가 없습니다.");
         } else {
-          alert("유효한 데이터가 없습니다.");
+            confirmMsg += `✅ 유효한 데이터 ${payload.length}건을 등록하시겠습니까?`;
+            if (confirm(confirmMsg)) {
+                await createProductsBulk(payload);
+                alert(`${payload.length}건 등록 완료!`);
+                loadData();
+                setIsBulkModalOpen(false);
+            }
         }
       } catch (err: any) { alert("오류: " + err.message); } finally { setIsBulkLoading(false); }
     };
     reader.readAsBinaryString(file);
+    e.target.value = ''; // Reset input to allow re-uploading same file if failed
   };
 
   const downloadSampleExcel = () => {
@@ -556,7 +617,6 @@ export const ProductManagement: React.FC = () => {
       {isBulkModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in">
-            {/* ... Same Bulk Upload UI ... */}
              <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
                 <h3 className="font-bold flex items-center gap-2 text-slate-800"><FileUp size={18} /> 제품 대량 등록</h3>
                 <button onClick={() => setIsBulkModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>

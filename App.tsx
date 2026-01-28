@@ -87,7 +87,23 @@ const AnalyticsTracker: React.FC<{children: React.ReactNode}> = ({children}) => 
         const visitLogged = sessionStorage.getItem('visit_logged');
         if (!visitLogged) {
             const isNewVisitor = !localStorage.getItem('visited_before');
-            trackEvent('visit', { is_new_visitor: isNewVisitor, referrer: document.referrer });
+            
+            // 유입 경로 분석 (Referrer & UTM)
+            const referrer = document.referrer;
+            const urlParams = new URLSearchParams(window.location.search);
+            const utmSource = urlParams.get('utm_source');
+            const utmMedium = urlParams.get('utm_medium');
+            const utmCampaign = urlParams.get('utm_campaign');
+
+            trackEvent('visit', { 
+                is_new_visitor: isNewVisitor, 
+                referrer: referrer,
+                source: utmSource,
+                medium: utmMedium,
+                campaign: utmCampaign,
+                path: window.location.pathname
+            });
+            
             sessionStorage.setItem('visit_logged', 'true');
             if (isNewVisitor) {
                 localStorage.setItem('visited_before', 'true');
