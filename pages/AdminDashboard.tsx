@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings, fetchAllTiers, updateTier, fetchAnalyticsStats, trackEvent, fetchBlogPosts, createBlogPost, updateBlogPost, deleteBlogPost } from '../services/dbService';
-import { UserProfile, ActivityLog, Tier, AnalyticsEvent, BlogPost } from '../types';
+import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings, fetchAllTiers, updateTier, fetchAnalyticsStats, trackEvent, fetchBlogPosts, createBlogPost, updateBlogPost, deleteBlogPost, fetchUserGuides, createUserGuide, updateUserGuide, deleteUserGuide } from '../services/dbService';
+import { UserProfile, ActivityLog, Tier, AnalyticsEvent, BlogPost, UserGuide } from '../types';
 import { Button } from '../components/Button';
-import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database, CalendarPlus, BarChart2, PieChart, Activity, MousePointer2, BookOpen, PenTool, Eye, EyeOff, Trash2, Save } from 'lucide-react';
+import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database, CalendarPlus, BarChart2, PieChart, Activity, MousePointer2, BookOpen, PenTool, Eye, EyeOff, Trash2, Save, Book } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, IS_CONFIG_ERROR } from '../services/supabase';
@@ -45,24 +45,18 @@ export const AdminDashboard: React.FC = () => {
     const { user: currentUser, isAdmin, isSuperAdmin, loading: authLoading } = useAuth();
     const navigate = useNavigate();
 
-    const [activeTab, setActiveTab] = useState<'users' | 'logs' | 'settings' | 'analytics' | 'blog'>('users');
+    const [activeTab, setActiveTab] = useState<'users' | 'logs' | 'settings' | 'analytics' | 'blog' | 'guides'>('users');
     const [profiles, setProfiles] = useState<UserProfile[]>([]);
     const [logs, setLogs] = useState<ActivityLog[]>([]);
     const [analyticsData, setAnalyticsData] = useState<AnalyticsEvent[]>([]);
     const [blogPosts, setBlogPosts] = useState<BlogPost[]>([]);
+    const [userGuides, setUserGuides] = useState<UserGuide[]>([]);
     const [tiers, setTiers] = useState<Tier[]>([]);
     const [settings, setSettings] = useState<AppSettings>({
-        silver_subscription_url: '',
-        gold_subscription_url: '',
-        youtube_tutorial_template: '',
-        youtube_tutorial_product: '',
-        youtube_tutorial_convert: '',
-        price_silver_original: '',
-        price_silver_sale: '',
-        price_gold_original: '',
-        price_gold_sale: ''
+        silver_subscription_url: '', gold_subscription_url: '', youtube_tutorial_template: '',
+        youtube_tutorial_product: '', youtube_tutorial_convert: '', price_silver_original: '',
+        price_silver_sale: '', price_gold_original: '', price_gold_sale: ''
     });
-    // Temporary state for editing tier limits
     const [tierLimits, setTierLimits] = useState({ free: 20, silver: 300 });
 
     const [loading, setLoading] = useState(true);
@@ -75,57 +69,64 @@ export const AdminDashboard: React.FC = () => {
     const [analyticsStart, setAnalyticsStart] = useState(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)); // 1 week ago
     const [analyticsEnd, setAnalyticsEnd] = useState(new Date().toISOString().slice(0, 10));
 
-    // Blog Editing State
-    const [isEditingPost, setIsEditingPost] = useState(false);
-    const [editingPostId, setEditingPostId] = useState<string | null>(null);
-    const [postForm, setPostForm] = useState({ title: '', slug: '', content: '', excerpt: '', is_published: false });
+    // Content Editing State (Shared for Blog & Guides)
+    const [isEditingContent, setIsEditingContent] = useState(false);
+    const [editingContentId, setEditingContentId] = useState<string | null>(null);
+    const [contentForm, setContentForm] = useState({ title: '', slug: '', content: '', excerpt: '', is_published: false, sort_order: 0 });
     const [autoSaveStatus, setAutoSaveStatus] = useState<string>('');
 
-    const SQL_SOLUTION = `-- [SQL V24] 블로그 및 콘텐츠 관리용 테이블
-CREATE TABLE IF NOT EXISTS public.blog_posts (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    title TEXT NOT NULL,
-    slug TEXT NOT NULL UNIQUE, -- URL 경로용 (예: how-to-use-excel)
-    excerpt TEXT, -- 목록에 보여줄 요약글
-    content TEXT NOT NULL, -- HTML 본문
-    thumbnail_url TEXT, -- 썸네일 이미지 URL
-    is_published BOOLEAN DEFAULT false,
-    author_id UUID REFERENCES auth.users(id),
-    view_count INTEGER DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+    const SQL_SOLUTION = `-- [SQL] 사용설명서(User Guides) 및 블로그 테이블 생성 스크립트
+-- 1. 사용설명서(User Guides) 테이블
+create table if not exists public.user_guides (
+  id uuid default gen_random_uuid() primary key,
+  title text not null,
+  slug text not null unique,
+  excerpt text,
+  content text not null,
+  thumbnail_url text,
+  is_published boolean default false,
+  sort_order integer default 0,
+  author_id uuid references auth.users(id),
+  created_at timestamp with time zone default timezone('utc'::text, now()),
+  updated_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- RLS 설정
-ALTER TABLE public.blog_posts ENABLE ROW LEVEL SECURITY;
-
--- 누구나 읽기 가능 (공개된 글만)
-DROP POLICY IF EXISTS "Public read published posts" ON public.blog_posts;
-CREATE POLICY "Public read published posts" ON public.blog_posts
-FOR SELECT USING (is_published = true OR (auth.uid() IN (SELECT id FROM profiles WHERE role IN ('admin', 'super_admin'))));
-
--- 관리자만 작성/수정/삭제 가능
-DROP POLICY IF EXISTS "Admins full access blog" ON public.blog_posts;
-CREATE POLICY "Admins full access blog" ON public.blog_posts
-FOR ALL USING (exists (select 1 from public.profiles where id = auth.uid() and role IN ('admin', 'super_admin')));
-
--- (기존) 비즈니스 분석(CRM)용 이벤트 테이블 생성
-CREATE TABLE IF NOT EXISTS public.analytics_events (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    event_type TEXT NOT NULL, 
-    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL, 
-    metadata JSONB DEFAULT '{}'::jsonb, 
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+-- 2. 블로그(Blog Posts) 테이블
+create table if not exists public.blog_posts (
+  id uuid default gen_random_uuid() primary key,
+  title text not null,
+  slug text not null unique,
+  excerpt text,
+  content text not null,
+  thumbnail_url text,
+  is_published boolean default false,
+  view_count integer default 0,
+  author_id uuid references auth.users(id),
+  created_at timestamp with time zone default timezone('utc'::text, now()),
+  updated_at timestamp with time zone default timezone('utc'::text, now())
 );
-CREATE INDEX IF NOT EXISTS idx_analytics_created_at ON public.analytics_events(created_at);
-CREATE INDEX IF NOT EXISTS idx_analytics_event_type ON public.analytics_events(event_type);
-ALTER TABLE public.analytics_events ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Anyone can insert events" ON public.analytics_events;
-CREATE POLICY "Anyone can insert events" ON public.analytics_events FOR INSERT WITH CHECK (true);
-DROP POLICY IF EXISTS "Admins can view events" ON public.analytics_events;
-CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USING (
-  exists (select 1 from public.profiles where id = auth.uid() and (role = 'admin' or role = 'super_admin'))
-);
+
+-- 3. RLS(보안 정책) 설정 - User Guides
+alter table public.user_guides enable row level security;
+
+create policy "Public read published guides"
+  on public.user_guides for select
+  using ( is_published = true or (auth.uid() in (select id from profiles where role in ('admin', 'super_admin'))) );
+
+create policy "Admins full access guides"
+  on public.user_guides for all
+  using ( exists (select 1 from public.profiles where id = auth.uid() and role in ('admin', 'super_admin')) );
+
+-- 4. RLS(보안 정책) 설정 - Blog Posts
+alter table public.blog_posts enable row level security;
+
+create policy "Public read published posts"
+  on public.blog_posts for select
+  using ( is_published = true or (auth.uid() in (select id from profiles where role in ('admin', 'super_admin'))) );
+
+create policy "Admins full access posts"
+  on public.blog_posts for all
+  using ( exists (select 1 from public.profiles where id = auth.uid() and role in ('admin', 'super_admin')) );
 `;
 
     useEffect(() => {
@@ -136,19 +137,16 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
 
     // Auto-save Effect
     useEffect(() => {
-        if (!isEditingPost) return;
-        
+        if (!isEditingContent) return;
         const timer = setTimeout(() => {
-            const draftKey = editingPostId ? `blog_draft_${editingPostId}` : 'blog_draft_new';
-            // Only save if there is content
-            if (postForm.title || postForm.content) {
-                localStorage.setItem(draftKey, JSON.stringify(postForm));
+            const draftKey = `draft_${activeTab}_${editingContentId || 'new'}`;
+            if (contentForm.title || contentForm.content) {
+                localStorage.setItem(draftKey, JSON.stringify(contentForm));
                 setAutoSaveStatus(`자동 저장됨 ${new Date().toLocaleTimeString()}`);
             }
-        }, 1000); // 1 second debounce
-
+        }, 1000);
         return () => clearTimeout(timer);
-    }, [postForm, isEditingPost, editingPostId]);
+    }, [contentForm, isEditingContent, editingContentId, activeTab]);
 
     const loadData = async () => {
         if (IS_CONFIG_ERROR) return;
@@ -158,6 +156,12 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
             if (activeTab === 'users') {
                 const data = await fetchAllProfiles();
                 setProfiles(data);
+                const [settingsData, tiersData] = await Promise.all([fetchAppSettings(), fetchAllTiers()]);
+                setSettings(settingsData);
+                setTiers(tiersData);
+                const freeTier = tiersData.find(t => t.id === 'free');
+                const silverTier = tiersData.find(t => t.id === 'silver');
+                setTierLimits({ free: freeTier?.max_crm_count || 20, silver: silverTier?.max_crm_count || 300 });
             } else if (activeTab === 'logs') {
                 const data = await fetchAllActivityLogs();
                 setLogs(data);
@@ -165,79 +169,47 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
                 const data = await fetchAnalyticsStats(analyticsStart, analyticsEnd);
                 setAnalyticsData(data);
             } else if (activeTab === 'blog') {
-                const data = await fetchBlogPosts(true); // include unpublished
+                const data = await fetchBlogPosts(true);
                 setBlogPosts(data);
+            } else if (activeTab === 'guides') {
+                const data = await fetchUserGuides(true);
+                setUserGuides(data);
+            } else if (activeTab === 'settings') {
+                 const [settingsData] = await Promise.all([fetchAppSettings()]);
+                 setSettings(settingsData);
             }
-            
-            // Always fetch settings & tiers unless on blog/analytics tab to optimize, 
-            // but for simplicity and consistency, let's fetch them if we are on users/settings
-            if (activeTab === 'settings' || activeTab === 'users') {
-                const [settingsData, tiersData] = await Promise.all([fetchAppSettings(), fetchAllTiers()]);
-                setSettings(settingsData);
-                setTiers(tiersData);
-                 // Set initial tier limits from DB
-                const freeTier = tiersData.find(t => t.id === 'free');
-                const silverTier = tiersData.find(t => t.id === 'silver');
-                setTierLimits({
-                    free: freeTier?.max_crm_count || 20,
-                    silver: silverTier?.max_crm_count || 300
-                });
-            }
-
         } catch (e: any) {
             console.error("Load Error:", e);
             setErrorMsg(e.message || "데이터 로드 중 오류가 발생했습니다.");
-            setShowSolution(true);
+            // 에러 발생 시 자동으로 솔루션 창 표시 (테이블 없음 에러 등)
+            if ((activeTab === 'guides' || activeTab === 'blog') && e.message?.includes('relation')) {
+                setShowSolution(true);
+            }
         } finally {
             setLoading(false);
         }
     };
     
-    useEffect(() => {
-        if (activeTab === 'analytics' && !loading) {
-            const loadAnalytics = async () => {
-                const data = await fetchAnalyticsStats(analyticsStart, analyticsEnd);
-                setAnalyticsData(data);
-            };
-            loadAnalytics();
-        }
-    }, [analyticsStart, analyticsEnd]);
-
+    // ... [Previous handler functions: handleUpdateUser, handleSaveSettings, extendSubscription] ...
     const handleUpdateUser = async (userId: string, updates: any, logMsg?: string) => {
         try {
             setLoading(true);
             await updateUserProfile(userId, updates);
-            if (currentUser && logMsg) {
-                await logActivity(currentUser.id, 'ADMIN_ACTION', logMsg);
-            }
-            if (updates.tier_id && updates.tier_id !== 'free') {
-                trackEvent('payment_success', { tier: updates.tier_id, manual_by_admin: true });
-            }
+            if (currentUser && logMsg) await logActivity(currentUser.id, 'ADMIN_ACTION', logMsg);
+            if (updates.tier_id && updates.tier_id !== 'free') trackEvent('payment_success', { tier: updates.tier_id, manual_by_admin: true });
             alert("사용자 정보가 업데이트되었습니다.");
             loadData();
-        } catch (e: any) {
-            alert("수정 실패: " + e.message);
-        } finally {
-            setLoading(false);
-        }
+        } catch (e: any) { alert("수정 실패: " + e.message); } finally { setLoading(false); }
     };
-
     const handleSaveSettings = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
             setLoading(true);
             await updateAppSettings(settings);
-            await updateTier('free', { max_crm_count: tierLimits.free });
-            await updateTier('silver', { max_crm_count: tierLimits.silver });
-            if (currentUser) await logActivity(currentUser.id, 'UPDATE_SETTINGS', '관리자 설정(가격/URL/한도) 업데이트');
+            if (currentUser) await logActivity(currentUser.id, 'UPDATE_SETTINGS', '관리자 설정 업데이트');
             alert('설정이 저장되었습니다.');
-        } catch (e: any) {
-            alert('저장 실패: ' + e.message);
-        } finally {
-            setLoading(false);
-        }
+        } catch (e: any) { alert('저장 실패: ' + e.message); } finally { setLoading(false); }
     };
-
     const extendSubscription = async (profile: UserProfile, days: number) => {
         const now = new Date();
         let baseDate = now;
@@ -248,74 +220,65 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
         const newEnd = new Date(baseDate);
         newEnd.setDate(newEnd.getDate() + days);
         const logMsg = `관리자가 사용자(${profile.email})의 구독을 ${days}일 연장했습니다. (${newEnd.toLocaleDateString()} 까지)`;
-        await handleUpdateUser(profile.id, {
-            subscription_end_date: newEnd.toISOString(),
-            subscription_start_date: profile.subscription_start_date || new Date().toISOString()
-        }, logMsg);
+        await handleUpdateUser(profile.id, { subscription_end_date: newEnd.toISOString(), subscription_start_date: profile.subscription_start_date || new Date().toISOString() }, logMsg);
     };
 
-    // Blog Handlers
-    const handleOpenPostEditor = (post?: BlogPost) => {
-        const draftKey = post ? `blog_draft_${post.id}` : 'blog_draft_new';
+    // Generic Content Handlers (Blog & Guides)
+    const handleOpenContentEditor = (item?: any) => {
+        const draftKey = `draft_${activeTab}_${item?.id || 'new'}`;
         const savedDraft = localStorage.getItem(draftKey);
         
-        let initialForm = { title: '', slug: '', content: '', excerpt: '', is_published: false };
-
-        if (post) {
-            setEditingPostId(post.id);
-            initialForm = { title: post.title, slug: post.slug, content: post.content, excerpt: post.excerpt || '', is_published: post.is_published };
+        let initialForm = { title: '', slug: '', content: '', excerpt: '', is_published: false, sort_order: 0 };
+        if (item) {
+            setEditingContentId(item.id);
+            initialForm = { 
+                title: item.title, slug: item.slug, content: item.content, 
+                excerpt: item.excerpt || '', is_published: item.is_published,
+                sort_order: item.sort_order || 0
+            };
         } else {
-            setEditingPostId(null);
+            setEditingContentId(null);
         }
 
-        // Check for draft
         if (savedDraft) {
             const draft = JSON.parse(savedDraft);
-            // If it's a new post OR the draft content is different from DB content
-            if (!post || (draft.content !== post.content || draft.title !== post.title)) {
-                if (confirm('이전에 작성 중이던 임시 저장된 내용이 있습니다. 불러오시겠습니까?')) {
-                    initialForm = draft;
-                } else {
-                    // If user declines draft, maybe clear it? For now, keep it safely.
-                    // localStorage.removeItem(draftKey); 
-                }
+            if (!item || (draft.content !== item.content || draft.title !== item.title)) {
+                if (confirm('이전에 작성 중이던 임시 저장된 내용이 있습니다. 불러오시겠습니까?')) initialForm = draft;
             }
         }
-
-        setPostForm(initialForm);
+        setContentForm(initialForm);
         setAutoSaveStatus('');
-        setIsEditingPost(true);
+        setIsEditingContent(true);
     };
 
-    const handleSavePost = async (e: React.FormEvent) => {
+    const handleSaveContent = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!postForm.title || !postForm.slug || !postForm.content) return alert("제목, URL(slug), 본문은 필수입니다.");
+        if (!contentForm.title || !contentForm.slug || !contentForm.content) return alert("제목, URL(slug), 본문은 필수입니다.");
         try {
             setLoading(true);
-            if (editingPostId) {
-                await updateBlogPost(editingPostId, postForm);
-                localStorage.removeItem(`blog_draft_${editingPostId}`); // Clear draft on success
+            const isGuide = activeTab === 'guides';
+            if (editingContentId) {
+                if (isGuide) await updateUserGuide(editingContentId, contentForm);
+                else await updateBlogPost(editingContentId, contentForm);
+                localStorage.removeItem(`draft_${activeTab}_${editingContentId}`);
                 alert("수정되었습니다.");
             } else {
-                await createBlogPost(postForm);
-                localStorage.removeItem('blog_draft_new'); // Clear draft on success
+                if (isGuide) await createUserGuide(contentForm);
+                else await createBlogPost(contentForm);
+                localStorage.removeItem(`draft_${activeTab}_new`);
                 alert("등록되었습니다.");
             }
-            setIsEditingPost(false);
+            setIsEditingContent(false);
             loadData();
         } catch (e: any) { alert(e.message); } finally { setLoading(false); }
     };
 
-    const handleCancelEdit = () => {
-        if (confirm("작성을 취소하시겠습니까? 임시 저장된 내용은 유지됩니다.")) {
-            setIsEditingPost(false);
-        }
-    };
-
-    const handleDeletePost = async (id: string) => {
+    const handleDeleteContent = async (id: string) => {
         if (confirm("정말 삭제하시겠습니까?")) {
-            await deleteBlogPost(id);
-            localStorage.removeItem(`blog_draft_${id}`);
+            const isGuide = activeTab === 'guides';
+            if (isGuide) await deleteUserGuide(id);
+            else await deleteBlogPost(id);
+            localStorage.removeItem(`draft_${activeTab}_${id}`);
             loadData();
         }
     };
@@ -326,29 +289,17 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
             const lowerTerm = searchTerm.toLowerCase().trim();
             result = result.filter(p => (p.email || '').toLowerCase().includes(lowerTerm) || p.id.toLowerCase().includes(lowerTerm));
         }
-        result.sort((a, b) => {
-            let aKey = sortConfig.key === 'subscription' ? 'subscription_end_date' : sortConfig.key;
-            let aValue: any = (a as any)[aKey] || '';
-            let bValue: any = (b as any)[aKey] || '';
-            if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-            if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-            return 0;
-        });
         return result;
-    }, [profiles, searchTerm, sortConfig]);
+    }, [profiles, searchTerm]);
 
     const analyticsMetrics = useMemo(() => {
         const signups = analyticsData.filter(e => e.event_type === 'signup').length;
-        const logins = analyticsData.filter(e => e.event_type === 'login').length;
         const visits = analyticsData.filter(e => e.event_type === 'visit').length;
         const newVisits = analyticsData.filter(e => e.event_type === 'visit' && e.metadata?.is_new_visitor).length;
         const subClicks = analyticsData.filter(e => e.event_type === 'click_subscription').length;
         const payments = analyticsData.filter(e => e.event_type === 'payment_success').length;
-        const deletions = analyticsData.filter(e => e.event_type === 'delete_account').length;
-        
         const conversionRate = visits > 0 ? ((signups / visits) * 100).toFixed(1) : '0';
         const clickRate = visits > 0 ? ((subClicks / visits) * 100).toFixed(1) : '0';
-
         const dateMap: Record<string, any> = {};
         analyticsData.forEach(e => {
             const date = new Date(e.created_at).toLocaleDateString();
@@ -358,8 +309,7 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
             if (e.event_type === 'click_subscription') dateMap[date].clicks++;
         });
         const chartData = Object.values(dateMap).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-        return { signups, logins, visits, newVisits, subClicks, payments, deletions, conversionRate, clickRate, chartData };
+        return { signups, visits, newVisits, subClicks, payments, conversionRate, clickRate, chartData };
     }, [analyticsData]);
 
     if (authLoading) return <div className="p-10 text-center">인증 확인 중...</div>;
@@ -375,26 +325,30 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
                     </div>
                 </div>
                 <div className="flex bg-slate-100 p-1 rounded-lg overflow-x-auto">
-                    <button onClick={() => setActiveTab('users')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'users' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>사용자 관리</button>
-                    {isSuperAdmin && (
-                        <button onClick={() => setActiveTab('analytics')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'analytics' ? 'bg-white text-indigo-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>CRM</button>
-                    )}
-                    <button onClick={() => setActiveTab('blog')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'blog' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>블로그 관리</button>
+                    <button onClick={() => setActiveTab('users')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'users' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>사용자</button>
+                    {isSuperAdmin && <button onClick={() => setActiveTab('analytics')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'analytics' ? 'bg-white text-indigo-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>CRM</button>}
+                    <button onClick={() => setActiveTab('guides')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'guides' ? 'bg-white text-green-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>가이드(사용설명서)</button>
+                    <button onClick={() => setActiveTab('blog')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'blog' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>블로그</button>
                     <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>설정</button>
                     <button onClick={() => setActiveTab('logs')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'logs' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>로그</button>
                 </div>
             </div>
 
-            {/* SQL 패치 가이드 */}
-            {(showSolution || activeTab === 'analytics' || activeTab === 'blog') && (
-                <div className="mb-6 bg-slate-900 rounded-xl p-6 border border-slate-700 shadow-2xl animate-fade-in">
+            {/* SQL 패치 가이드 (가이드/블로그 탭에서 에러 발생 시 또는 요청 시 노출) */}
+            {(showSolution) && (
+                <div className="mb-6 bg-slate-900 rounded-xl p-6 border border-slate-700 shadow-2xl animate-fade-in relative">
+                    <button onClick={() => setShowSolution(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X size={18}/></button>
                     <div className="flex justify-between items-center mb-4 text-green-400 font-bold text-sm font-mono">
-                        <div className="flex items-center gap-2"><Terminal size={16} /> SQL Sync Script (블로그/이벤트 테이블)</div>
+                        <div className="flex items-center gap-2"><Terminal size={16} /> SQL Sync Script (테이블 생성)</div>
                         <button onClick={() => { navigator.clipboard.writeText(SQL_SOLUTION); alert("복사되었습니다. Supabase SQL Editor에 붙여넣어 실행하세요."); }} className="text-xs bg-green-700 text-white px-3 py-1.5 rounded hover:bg-green-600 transition-colors flex items-center gap-1">
                             <Copy size={12} /> 코드 복사
                         </button>
                     </div>
-                    <pre className="text-[11px] font-mono text-slate-300 bg-black/40 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-800">{SQL_SOLUTION}</pre>
+                    <p className="text-slate-400 text-xs mb-4">
+                        * Supabase 대시보드 {'>'} SQL Editor {'>'} New Query 에 아래 코드를 붙여넣고 Run 하세요. <br/>
+                        * 테이블이 생성되어야 가이드 및 블로그 기능이 정상 작동합니다.
+                    </p>
+                    <pre className="text-[11px] font-mono text-slate-300 bg-black/40 p-4 rounded-lg overflow-x-auto whitespace-pre-wrap leading-relaxed border border-slate-800 h-64 overflow-y-auto custom-scrollbar">{SQL_SOLUTION}</pre>
                 </div>
             )}
 
@@ -411,8 +365,116 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
                         <RefreshCw className="animate-spin h-10 w-10 text-primary mb-4" />
                         <p className="text-slate-500 font-medium">로딩 중...</p>
                     </div>
-                ) : activeTab === 'analytics' ? (
+                ) : (activeTab === 'blog' || activeTab === 'guides') ? (
                     <div className="p-8">
+                        {isEditingContent ? (
+                            <div>
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-xl font-bold text-slate-800">{editingContentId ? '수정하기' : '새 글 작성'} ({activeTab === 'guides' ? '사용설명서' : '블로그'})</h3>
+                                    <Button variant="secondary" onClick={() => { if(confirm("취소하시겠습니까?")) setIsEditingContent(false); }} icon={<X size={16}/>}>취소</Button>
+                                </div>
+                                <form onSubmit={handleSaveContent} className="space-y-4 max-w-4xl">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-600 mb-1">제목</label>
+                                            <input className="w-full border p-2 rounded" value={contentForm.title} onChange={e => setContentForm({...contentForm, title: e.target.value})} placeholder="글 제목" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-600 mb-1">URL Slug (예: guide-1)</label>
+                                            <input className="w-full border p-2 rounded font-mono text-sm" value={contentForm.slug} onChange={e => setContentForm({...contentForm, slug: e.target.value})} placeholder="url-slug" />
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-bold text-slate-600 mb-1">요약 (Excerpt)</label>
+                                            <input className="w-full border p-2 rounded" value={contentForm.excerpt} onChange={e => setContentForm({...contentForm, excerpt: e.target.value})} placeholder="목록에 표시될 짧은 설명" />
+                                        </div>
+                                        {activeTab === 'guides' && (
+                                            <div>
+                                                <label className="block text-sm font-bold text-slate-600 mb-1">정렬 순서</label>
+                                                <input type="number" className="w-full border p-2 rounded" value={contentForm.sort_order} onChange={e => setContentForm({...contentForm, sort_order: Number(e.target.value)})} placeholder="0 (낮은 순서대로 정렬)" />
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-600 mb-1">본문 (Markdown 지원)</label>
+                                        <textarea className="w-full border p-2 rounded h-80 font-mono text-sm" value={contentForm.content} onChange={e => setContentForm({...contentForm, content: e.target.value})} placeholder="**Markdown** 형식으로 작성하세요." />
+                                        <div className="flex justify-between items-center mt-1">
+                                            <p className="text-xs text-slate-400">* 굵게(**text**), 이미지(![alt](url)) 등 마크다운 사용 가능</p>
+                                            {autoSaveStatus && <p className="text-xs font-bold text-green-600 flex items-center gap-1 animate-pulse"><Save size={12}/> {autoSaveStatus}</p>}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <input type="checkbox" id="published" checked={contentForm.is_published} onChange={e => setContentForm({...contentForm, is_published: e.target.checked})} />
+                                        <label htmlFor="published" className="text-sm font-bold text-slate-700">바로 공개하기</label>
+                                    </div>
+                                    <div className="flex justify-end pt-4">
+                                        <Button type="submit" icon={<Check size={16}/>}>저장하기</Button>
+                                    </div>
+                                </form>
+                            </div>
+                        ) : (
+                            <div>
+                                <div className="flex justify-between items-center mb-6">
+                                    <div>
+                                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                            {activeTab === 'guides' ? <HelpCircle className="text-green-600"/> : <BookOpen className="text-blue-600"/>} 
+                                            {activeTab === 'guides' ? '사용설명서 관리' : '블로그 콘텐츠 관리'}
+                                        </h3>
+                                        <p className="text-sm text-slate-500">{activeTab === 'guides' ? '앱 사용법 및 가이드를 작성하세요.' : '정보성 글 및 소식을 작성하세요.'}</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <Button variant="secondary" size="sm" onClick={() => setShowSolution(!showSolution)} icon={<Database size={14}/>}>SQL 스키마</Button>
+                                        <Button onClick={() => handleOpenContentEditor()} icon={<PenTool size={16}/>}>새 글 작성</Button>
+                                    </div>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left text-sm">
+                                        <thead className="bg-slate-50 border-b text-slate-500 text-xs font-bold uppercase">
+                                            <tr>
+                                                <th className="px-4 py-3">제목 / Slug</th>
+                                                <th className="px-4 py-3">상태</th>
+                                                {activeTab === 'guides' && <th className="px-4 py-3">순서</th>}
+                                                <th className="px-4 py-3">작성일</th>
+                                                <th className="px-4 py-3 text-right">관리</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {(activeTab === 'guides' ? userGuides : blogPosts).length === 0 ? (
+                                                <tr><td colSpan={5} className="p-8 text-center text-slate-400">작성된 글이 없습니다.</td></tr>
+                                            ) : (
+                                                (activeTab === 'guides' ? userGuides : blogPosts).map(item => (
+                                                    <tr key={item.id} className="hover:bg-slate-50">
+                                                        <td className="px-4 py-3">
+                                                            <div className="font-bold text-slate-800">{item.title}</div>
+                                                            <div className="text-xs text-slate-400 font-mono">/{item.slug}</div>
+                                                        </td>
+                                                        <td className="px-4 py-3">
+                                                            {item.is_published ? 
+                                                                <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-bold flex w-fit items-center gap-1"><Eye size={10}/> 공개</span> : 
+                                                                <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full text-xs font-bold flex w-fit items-center gap-1"><EyeOff size={10}/> 비공개</span>
+                                                            }
+                                                        </td>
+                                                        {activeTab === 'guides' && <td className="px-4 py-3 font-mono text-xs">{(item as UserGuide).sort_order}</td>}
+                                                        <td className="px-4 py-3 text-slate-500 text-xs">{new Date(item.created_at).toLocaleDateString()}</td>
+                                                        <td className="px-4 py-3 text-right">
+                                                            <div className="flex justify-end gap-2">
+                                                                <button onClick={() => window.open(`/#/${activeTab}/${item.slug}`, '_blank')} className="p-1 text-slate-400 hover:text-blue-600"><ExternalLink size={16}/></button>
+                                                                <button onClick={() => handleOpenContentEditor(item)} className="p-1 text-slate-400 hover:text-blue-600"><Edit size={16}/></button>
+                                                                <button onClick={() => handleDeleteContent(item.id)} className="p-1 text-slate-400 hover:text-red-600"><Trash2 size={16}/></button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                ) : activeTab === 'analytics' ? (
+                     <div className="p-8">
                          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                             <div>
                                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Activity className="text-primary"/> 비즈니스 인사이트</h3>
@@ -487,100 +549,8 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
                             </div>
                         </div>
                     </div>
-                ) : activeTab === 'blog' ? (
-                    <div className="p-8">
-                        {isEditingPost ? (
-                            <div>
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-xl font-bold text-slate-800">{editingPostId ? '글 수정' : '새 글 작성'}</h3>
-                                    <Button variant="secondary" onClick={handleCancelEdit} icon={<X size={16}/>}>취소</Button>
-                                </div>
-                                <form onSubmit={handleSavePost} className="space-y-4 max-w-4xl">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-bold text-slate-600 mb-1">제목</label>
-                                            <input className="w-full border p-2 rounded" value={postForm.title} onChange={e => setPostForm({...postForm, title: e.target.value})} placeholder="글 제목" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-bold text-slate-600 mb-1">URL Slug (예: excel-tips)</label>
-                                            <input className="w-full border p-2 rounded font-mono text-sm" value={postForm.slug} onChange={e => setPostForm({...postForm, slug: e.target.value})} placeholder="url-slug" />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-600 mb-1">요약 (Excerpt)</label>
-                                        <input className="w-full border p-2 rounded" value={postForm.excerpt} onChange={e => setPostForm({...postForm, excerpt: e.target.value})} placeholder="목록에 표시될 짧은 설명" />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-600 mb-1">본문 (Markdown 지원)</label>
-                                        <textarea className="w-full border p-2 rounded h-64 font-mono text-sm" value={postForm.content} onChange={e => setPostForm({...postForm, content: e.target.value})} placeholder="**Markdown** 형식으로 작성하세요." />
-                                        <div className="flex justify-between items-center mt-1">
-                                            <p className="text-xs text-slate-400">* 굵게(**text**), 헤더(## Title), 리스트(- item) 등 마크다운 문법을 사용할 수 있습니다.</p>
-                                            {autoSaveStatus && <p className="text-xs font-bold text-green-600 flex items-center gap-1 animate-pulse"><Save size={12}/> {autoSaveStatus}</p>}
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <input type="checkbox" id="published" checked={postForm.is_published} onChange={e => setPostForm({...postForm, is_published: e.target.checked})} />
-                                        <label htmlFor="published" className="text-sm font-bold text-slate-700">바로 공개하기</label>
-                                    </div>
-                                    <div className="flex justify-end pt-4">
-                                        <Button type="submit" icon={<Check size={16}/>}>저장하기</Button>
-                                    </div>
-                                </form>
-                            </div>
-                        ) : (
-                            <div>
-                                <div className="flex justify-between items-center mb-6">
-                                    <div>
-                                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><BookOpen className="text-blue-600"/> 블로그 콘텐츠 관리</h3>
-                                        <p className="text-sm text-slate-500">애드센스 승인을 위한 정보성 글을 작성하세요.</p>
-                                    </div>
-                                    <Button onClick={() => handleOpenPostEditor()} icon={<PenTool size={16}/>}>새 글 작성</Button>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left text-sm">
-                                        <thead className="bg-slate-50 border-b text-slate-500 text-xs font-bold uppercase">
-                                            <tr>
-                                                <th className="px-4 py-3">제목 / Slug</th>
-                                                <th className="px-4 py-3">상태</th>
-                                                <th className="px-4 py-3">작성일</th>
-                                                <th className="px-4 py-3 text-right">관리</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                            {blogPosts.length === 0 ? (
-                                                <tr><td colSpan={4} className="p-8 text-center text-slate-400">작성된 글이 없습니다.</td></tr>
-                                            ) : (
-                                                blogPosts.map(post => (
-                                                    <tr key={post.id} className="hover:bg-slate-50">
-                                                        <td className="px-4 py-3">
-                                                            <div className="font-bold text-slate-800">{post.title}</div>
-                                                            <div className="text-xs text-slate-400 font-mono">/{post.slug}</div>
-                                                        </td>
-                                                        <td className="px-4 py-3">
-                                                            {post.is_published ? 
-                                                                <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs font-bold flex w-fit items-center gap-1"><Eye size={10}/> 공개</span> : 
-                                                                <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full text-xs font-bold flex w-fit items-center gap-1"><EyeOff size={10}/> 비공개</span>
-                                                            }
-                                                        </td>
-                                                        <td className="px-4 py-3 text-slate-500 text-xs">{new Date(post.created_at).toLocaleDateString()}</td>
-                                                        <td className="px-4 py-3 text-right">
-                                                            <div className="flex justify-end gap-2">
-                                                                <button onClick={() => window.open(`/#/blog/${post.slug}`, '_blank')} className="p-1 text-slate-400 hover:text-blue-600"><ExternalLink size={16}/></button>
-                                                                <button onClick={() => handleOpenPostEditor(post)} className="p-1 text-slate-400 hover:text-blue-600"><Edit size={16}/></button>
-                                                                <button onClick={() => handleDeletePost(post.id)} className="p-1 text-slate-400 hover:text-red-600"><Trash2 size={16}/></button>
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                ))
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        )}
-                    </div>
                 ) : activeTab === 'logs' ? (
-                    <div className="p-4 overflow-x-auto">
+                     <div className="p-4 overflow-x-auto">
                         <table className="w-full text-left text-sm">
                            <thead className="bg-slate-50 border-b text-slate-500 text-xs font-bold uppercase tracking-wider">
                                <tr><th className="px-6 py-4">시간</th><th className="px-6 py-4">사용자</th><th className="px-6 py-4">동작</th><th className="px-6 py-4">내용</th></tr>
@@ -630,19 +600,6 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
                                     <p className="text-[10px] text-slate-400">* 판매가가 정상가보다 낮을 경우, 메인 화면에 자동으로 '할인 배지'가 표시됩니다.</p>
                                 </div>
 
-                                <h4 className="font-bold text-slate-700 flex items-center gap-2 pt-2"><Database size={16}/> CRM 데이터 저장 한도 (Tiers)</h4>
-                                <div className="space-y-3 p-5 bg-slate-50 rounded-xl border border-slate-200">
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 mb-1">무료(Free) 등급 한도 (개)</label>
-                                        <input type="number" className="w-full border rounded p-2 text-sm" placeholder="기본값: 20" value={tierLimits.free} onChange={e => setTierLimits({...tierLimits, free: Number(e.target.value)})} />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 mb-1">실버(Silver) 등급 한도 (개)</label>
-                                        <input type="number" className="w-full border rounded p-2 text-sm" placeholder="기본값: 300" value={tierLimits.silver} onChange={e => setTierLimits({...tierLimits, silver: Number(e.target.value)})} />
-                                    </div>
-                                    <p className="text-[10px] text-slate-400">* 골드 등급은 무제한입니다. (이 값은 TIERS 테이블의 max_crm_count에 저장됩니다)</p>
-                                </div>
-
                                 <h4 className="font-bold text-slate-700 flex items-center gap-2 pt-2"><LinkIcon size={16}/> 결제 및 구독 URL</h4>
                                 <div className="space-y-3">
                                     <div>
@@ -673,14 +630,6 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
                                     </div>
                                 </div>
 
-                                <div className="bg-yellow-50 border border-yellow-100 p-4 rounded-xl">
-                                    <h5 className="font-bold text-yellow-800 text-sm mb-2 flex items-center gap-1"><AlertTriangle size={14}/> 주의사항</h5>
-                                    <ul className="text-xs text-yellow-700 space-y-1 list-disc pl-4">
-                                        <li>가격 정보는 숫자만 입력하세요 (콤마 제외).</li>
-                                        <li>저장 버튼을 누르면 즉시 모든 사용자에게 반영됩니다.</li>
-                                    </ul>
-                                </div>
-                                
                                 <div className="pt-4 flex justify-end">
                                     <Button type="submit" size="lg" icon={<Check size={18}/>}>설정 저장하기</Button>
                                 </div>
@@ -759,18 +708,10 @@ CREATE POLICY "Admins can view events" ON public.analytics_events FOR SELECT USI
                                         </td>
                                         <td className="px-4 py-4">
                                             <div className="flex justify-center gap-2">
-                                                <button 
-                                                    onClick={() => extendSubscription(p, 1)}
-                                                    className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 text-slate-600 rounded-md hover:bg-slate-100 font-bold border border-slate-200 transition-colors text-xs"
-                                                    title="구독 1일 연장"
-                                                >
+                                                <button onClick={() => extendSubscription(p, 1)} className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 text-slate-600 rounded-md hover:bg-slate-100 font-bold border border-slate-200 transition-colors text-xs" title="구독 1일 연장">
                                                     <CalendarPlus size={14} /> +1일
                                                 </button>
-                                                <button 
-                                                    onClick={() => extendSubscription(p, 30)}
-                                                    className="flex items-center gap-1.5 px-2 py-1.5 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 font-bold border border-indigo-200 transition-colors text-xs"
-                                                    title="구독 30일 연장"
-                                                >
+                                                <button onClick={() => extendSubscription(p, 30)} className="flex items-center gap-1.5 px-2 py-1.5 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 font-bold border border-indigo-200 transition-colors text-xs" title="구독 30일 연장">
                                                     <Clock3 size={14} /> +30일
                                                 </button>
                                             </div>

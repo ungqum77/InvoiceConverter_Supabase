@@ -136,3 +136,17 @@ export interface BlogPost {
   created_at: string;
   updated_at: string;
 }
+
+export interface UserGuide {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt?: string;
+  content: string;
+  thumbnail_url?: string;
+  is_published: boolean;
+  sort_order: number;
+  author_id?: string;
+  created_at: string;
+  updated_at: string;
+}

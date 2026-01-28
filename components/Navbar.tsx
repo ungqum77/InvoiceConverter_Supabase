@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Package, Settings, FileText, Home, LogOut, User as UserIcon, LogIn, ShieldAlert, Menu, X, LayoutDashboard, ChevronRight, TrendingUp, BookOpen } from 'lucide-react';
+import { Package, Settings, FileText, Home, LogOut, User as UserIcon, LogIn, ShieldAlert, Menu, X, LayoutDashboard, ChevronRight, TrendingUp, BookOpen, HelpCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './Button';
 
@@ -60,6 +60,9 @@ export const Navbar: React.FC = () => {
           <div className="hidden md:flex items-center gap-1">
             <Link to="/" className={`px-4 py-2 rounded-xl text-sm transition-all flex items-center gap-2 ${isActive('/')} border`}>
               <Home size={18} /> 홈
+            </Link>
+            <Link to="/guides" className={`px-4 py-2 rounded-xl text-sm transition-all flex items-center gap-2 ${isActive('/guides')} border`}>
+              <HelpCircle size={18} /> 사용설명서
             </Link>
             <Link to="/blog" className={`px-4 py-2 rounded-xl text-sm transition-all flex items-center gap-2 ${isActive('/blog')} border`}>
               <BookOpen size={18} /> 블로그
@@ -121,62 +124,71 @@ export const Navbar: React.FC = () => {
               </div>
               <span className="font-black text-slate-900 tracking-tighter">전체 메뉴</span>
             </div>
-            <button onClick={closeMobileMenu} className="p-2 text-slate-500 hover:text-slate-900 bg-slate-100 rounded-full transition-colors">
+            <button onClick={closeMobileMenu} className="p-2 text-slate-500 hover:text-slate-900">
               <X size={24} />
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-6 py-8">
-            <div className="space-y-4">
-              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-2">주요 메뉴</p>
-              
-              <Link to="/" onClick={closeMobileMenu} className={`flex items-center justify-between px-5 py-5 rounded-2xl border-2 transition-all ${isActive('/')}`}>
-                <div className="flex items-center gap-4">
-                  <div className={`p-3 rounded-xl ${location.pathname === '/' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}><Home size={22} /></div>
-                  <span className="text-lg font-bold">홈 화면</span>
+          <div className="p-4 space-y-1 overflow-y-auto max-h-[calc(100vh-64px)]">
+            {user && (
+                <div className="mb-6 p-4 bg-slate-50 rounded-2xl flex items-center justify-between border border-slate-100">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-slate-400 border border-slate-200"><UserIcon size={20}/></div>
+                        <div>
+                            <div className="text-sm font-bold text-slate-900">{user.email?.split('@')[0]}님</div>
+                            <button onClick={() => { closeMobileMenu(); navigate('/products?tab=account'); }} className="text-xs text-primary font-bold hover:underline">내 정보 관리</button>
+                        </div>
+                    </div>
+                    <button onClick={handleSignOut} className="p-2 text-slate-400 hover:text-red-500"><LogOut size={20}/></button>
                 </div>
-                <ChevronRight size={20} className="opacity-30" />
-              </Link>
-              
-              <Link to="/blog" onClick={closeMobileMenu} className={`flex items-center justify-between px-5 py-5 rounded-2xl border-2 transition-all ${isActive('/blog')}`}>
-                <div className="flex items-center gap-4">
-                  <div className={`p-3 rounded-xl ${location.pathname === '/blog' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}><BookOpen size={22} /></div>
-                  <span className="text-lg font-bold">블로그</span>
-                </div>
-                <ChevronRight size={20} className="opacity-30" />
-              </Link>
+            )}
 
-              {user && (
-                <>
-                  <Link to="/products" onClick={closeMobileMenu} className={`flex items-center justify-between px-5 py-5 rounded-2xl border-2 transition-all ${isActive('/products')}`}>
-                    <div className="flex items-center gap-4">
-                      <div className={`p-3 rounded-xl ${location.pathname === '/products' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}><Settings size={22} /></div>
-                      <span className="text-lg font-bold">제품 관리</span>
-                    </div>
-                    <ChevronRight size={20} className="opacity-30" />
-                  </Link>
+            <Link to="/" onClick={closeMobileMenu} className="flex items-center gap-3 p-4 rounded-xl text-slate-700 hover:bg-slate-50 font-bold transition-colors">
+              <Home size={20} className="text-slate-400"/> 홈
+            </Link>
+             <Link to="/guides" onClick={closeMobileMenu} className="flex items-center gap-3 p-4 rounded-xl text-slate-700 hover:bg-slate-50 font-bold transition-colors">
+              <HelpCircle size={20} className="text-slate-400"/> 사용설명서
+            </Link>
+            <Link to="/blog" onClick={closeMobileMenu} className="flex items-center gap-3 p-4 rounded-xl text-slate-700 hover:bg-slate-50 font-bold transition-colors">
+              <BookOpen size={20} className="text-slate-400"/> 블로그
+            </Link>
 
-                  <Link to="/convert" onClick={closeMobileMenu} className={`flex items-center justify-between px-5 py-5 rounded-2xl border-2 transition-all ${isActive('/convert')}`}>
-                    <div className="flex items-center gap-4">
-                      <div className={`p-3 rounded-xl ${location.pathname === '/convert' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}><FileText size={22} /></div>
-                      <span className="text-lg font-bold">송장 변환</span>
-                    </div>
-                    <ChevronRight size={20} className="opacity-30" />
-                  </Link>
+            {user && (
+              <>
+                <div className="my-2 border-t border-slate-100"></div>
+                <div className="px-4 py-2 text-xs font-black text-slate-400 uppercase tracking-wider">서비스</div>
+                <Link to="/products" onClick={closeMobileMenu} className="flex items-center gap-3 p-4 rounded-xl text-slate-700 hover:bg-slate-50 font-bold transition-colors">
+                  <Settings size={20} className="text-slate-400"/> 제품 관리
+                </Link>
+                <Link to="/convert" onClick={closeMobileMenu} className="flex items-center gap-3 p-4 rounded-xl text-slate-700 hover:bg-slate-50 font-bold transition-colors">
+                  <FileText size={20} className="text-slate-400"/> 송장 변환
+                </Link>
+                <Link to="/crm" onClick={closeMobileMenu} className="flex items-center gap-3 p-4 rounded-xl text-slate-700 hover:bg-slate-50 font-bold transition-colors">
+                  <TrendingUp size={20} className="text-slate-400"/> 매출 CRM
+                </Link>
+              </>
+            )}
 
-                  <Link to="/crm" onClick={closeMobileMenu} className={`flex items-center justify-between px-5 py-5 rounded-2xl border-2 transition-all ${isActive('/crm')}`}>
-                    <div className="flex items-center gap-4">
-                      <div className={`p-3 rounded-xl ${location.pathname === '/crm' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}><TrendingUp size={22} /></div>
-                      <span className="text-lg font-bold">매출 CRM</span>
-                    </div>
-                    <ChevronRight size={20} className="opacity-30" />
-                  </Link>
-                </>
-              )}
+            {isAdmin && (
+               <>
+                 <div className="my-2 border-t border-slate-100"></div>
+                 <Link to="/admin" onClick={closeMobileMenu} className="flex items-center gap-3 p-4 rounded-xl text-red-600 bg-red-50 hover:bg-red-100 font-bold transition-colors border border-red-100">
+                    <ShieldAlert size={20}/> 관리자 페이지
+                 </Link>
+               </>
+            )}
+
+            {!user && (
+              <div className="pt-4 mt-4 border-t border-slate-100">
+                <Link to="/auth" onClick={closeMobileMenu} className="flex items-center justify-center gap-2 w-full p-4 bg-primary text-white rounded-xl font-bold shadow-lg shadow-primary/20 hover:bg-primary-hover transition-all">
+                  <LogIn size={20} /> 로그인 / 회원가입
+                </Link>
+              </div>
+            )}
+            
+            <div className="mt-8 text-center">
+                <p className="text-[10px] text-slate-300 font-mono">APP VER: {APP_VERSION}</p>
             </div>
-          </div>
-          <div className="p-8 border-t border-slate-100 bg-slate-50/50">
-             <Button onClick={handleSignOut} className="w-full">로그아웃</Button>
           </div>
         </div>
       )}

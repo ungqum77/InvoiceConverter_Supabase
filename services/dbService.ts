@@ -1,6 +1,6 @@
 
 import { supabase } from './supabase';
-import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings, AnalyticsEvent, BlogPost } from '../types';
+import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings, AnalyticsEvent, BlogPost, UserGuide } from '../types';
 
 export type { AppSettings };
 
@@ -370,7 +370,7 @@ export const fetchAnalyticsStats = async (startDate: string, endDate: string) =>
     }
 };
 
-// --- Blog Service (New) ---
+// --- Blog Service ---
 
 export const fetchBlogPosts = async (includeUnpublished = false): Promise<BlogPost[]> => {
     if (!supabase) return [];
@@ -412,5 +412,50 @@ export const updateBlogPost = async (id: string, updates: Partial<BlogPost>) => 
 export const deleteBlogPost = async (id: string) => {
     if (!supabase) throw new Error("Supabase not connected");
     const { error } = await supabase.from('blog_posts').delete().eq('id', id);
+    if (error) throw error;
+};
+
+// --- User Guide Service ---
+
+export const fetchUserGuides = async (includeUnpublished = false): Promise<UserGuide[]> => {
+    if (!supabase) return [];
+    let query = supabase.from('user_guides').select('*').order('sort_order', { ascending: true });
+    if (!includeUnpublished) {
+        query = query.eq('is_published', true);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+};
+
+export const fetchUserGuideBySlug = async (slug: string): Promise<UserGuide | null> => {
+    if (!supabase) return null;
+    const { data, error } = await supabase.from('user_guides').select('*').eq('slug', slug).single();
+    if (error) return null;
+    return data;
+};
+
+export const createUserGuide = async (guide: Omit<UserGuide, 'id' | 'created_at' | 'updated_at' | 'view_count'>) => {
+    if (!supabase) throw new Error("Supabase not connected");
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('user_guides').insert({
+        ...guide,
+        author_id: user?.id
+    });
+    if (error) throw error;
+};
+
+export const updateUserGuide = async (id: string, updates: Partial<UserGuide>) => {
+    if (!supabase) throw new Error("Supabase not connected");
+    const { error } = await supabase.from('user_guides').update({
+        ...updates,
+        updated_at: new Date().toISOString()
+    }).eq('id', id);
+    if (error) throw error;
+};
+
+export const deleteUserGuide = async (id: string) => {
+    if (!supabase) throw new Error("Supabase not connected");
+    const { error } = await supabase.from('user_guides').delete().eq('id', id);
     if (error) throw error;
 };

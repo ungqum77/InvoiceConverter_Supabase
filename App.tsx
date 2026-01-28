@@ -1,3 +1,4 @@
+
 import React, { ErrorInfo, ReactNode, useEffect } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
@@ -11,6 +12,8 @@ import { AdminDashboard } from './pages/AdminDashboard';
 import { InvoiceMatcher } from './pages/InvoiceMatcher';
 import { BlogList } from './pages/BlogList';
 import { BlogPostPage } from './pages/BlogPost';
+import { UserGuideList } from './pages/UserGuideList';
+import { UserGuidePage } from './pages/UserGuidePage';
 import { Privacy } from './pages/Privacy';
 import { Terms } from './pages/Terms';
 import { AuthProvider } from './contexts/AuthContext';
@@ -113,6 +116,8 @@ const App: React.FC = () => {
                     <Route path="/admin/match" element={<InvoiceMatcher />} />
                     <Route path="/blog" element={<BlogList />} />
                     <Route path="/blog/:slug" element={<BlogPostPage />} />
+                    <Route path="/guides" element={<UserGuideList />} />
+                    <Route path="/guides/:slug" element={<UserGuidePage />} />
                     <Route path="/privacy" element={<Privacy />} />
                     <Route path="/terms" element={<Terms />} />
                     </Routes>
