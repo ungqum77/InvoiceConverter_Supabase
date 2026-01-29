@@ -190,7 +190,6 @@ create policy "Admins full access posts"
         }
     };
     
-    // ... [Content Handlers remain the same] ...
     const handleUpdateUser = async (userId: string, updates: any, logMsg?: string) => {
         try {
             setLoading(true);
@@ -201,6 +200,7 @@ create policy "Admins full access posts"
             loadData();
         } catch (e: any) { alert("수정 실패: " + e.message); } finally { setLoading(false); }
     };
+
     const handleSaveSettings = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
@@ -210,6 +210,7 @@ create policy "Admins full access posts"
             alert('설정이 저장되었습니다.');
         } catch (e: any) { alert('저장 실패: ' + e.message); } finally { setLoading(false); }
     };
+
     const extendSubscription = async (profile: UserProfile, days: number) => {
         const now = new Date();
         let baseDate = now;
@@ -300,7 +301,6 @@ create policy "Admins full access posts"
         const conversionRate = visits > 0 ? ((signups / visits) * 100).toFixed(1) : '0';
         const clickRate = visits > 0 ? ((subClicks / visits) * 100).toFixed(1) : '0';
         
-        // Date Aggregation
         const dateMap: Record<string, any> = {};
         analyticsData.forEach(e => {
             const date = new Date(e.created_at).toLocaleDateString();
@@ -311,12 +311,11 @@ create policy "Admins full access posts"
         });
         const chartData = Object.values(dateMap).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-        // Referrer (Traffic Source) Aggregation
         const sourceMap: Record<string, number> = { 'Direct': 0 };
         analyticsData.forEach(e => {
             if (e.event_type === 'visit') {
                 let source = 'Direct';
-                const metaSource = e.metadata?.source; // utm_source
+                const metaSource = e.metadata?.source;
                 const metaRef = e.metadata?.referrer;
 
                 if (metaSource) {
@@ -331,14 +330,9 @@ create policy "Admins full access posts"
                         else if (host.includes('facebook') || host.includes('instagram')) source = 'Social';
                         else if (host.includes('youtube')) source = 'Youtube';
                         else source = host;
-                    } catch {
-                        source = 'Other';
-                    }
+                    } catch { source = 'Other'; }
                 }
-                
-                // 앱 내부 이동이나 새로고침으로 인한 referrer는 제외하거나 Direct로 처리
                 if (source.includes(window.location.hostname)) source = 'Direct';
-
                 sourceMap[source] = (sourceMap[source] || 0) + 1;
             }
         });
@@ -372,7 +366,6 @@ create policy "Admins full access posts"
                 </div>
             </div>
 
-            {/* SQL 패치 가이드 */}
             {(showSolution) && (
                 <div className="mb-6 bg-slate-900 rounded-xl p-6 border border-slate-700 shadow-2xl animate-fade-in relative">
                     <button onClick={() => setShowSolution(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X size={18}/></button>
@@ -400,7 +393,6 @@ create policy "Admins full access posts"
                         <p className="text-slate-500 font-medium">로딩 중...</p>
                     </div>
                 ) : (activeTab === 'blog' || activeTab === 'guides') ? (
-                    // ... [Blog/Guides UI remains the same] ...
                     <div className="p-8">
                         {isEditingContent ? (
                             <div>
@@ -513,25 +505,21 @@ create policy "Admins full access posts"
                          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                             <div>
                                 <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Activity className="text-primary"/> 비즈니스 인사이트</h3>
-                                <p className="text-sm text-slate-500">방문자 행동 및 전환율 분석</p>
+                                <p className="text-sm text-slate-500">방문자 행동 및 전환율 분석 (관리자 방문 제외)</p>
                             </div>
-                            <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 w-full md:w-auto">
-                                <div className="flex items-center gap-2 w-full sm:w-auto">
-                                    <Calendar size={16} className="text-slate-400 hidden sm:block shrink-0"/>
-                                    <div className="flex items-center gap-2 flex-1 sm:flex-none justify-center">
-                                        <input type="date" value={analyticsStart} onChange={e => setAnalyticsStart(e.target.value)} className="bg-white rounded border border-slate-200 text-xs px-2 py-1.5 focus:ring-2 focus:ring-primary/20 outline-none text-slate-600 w-full sm:w-auto"/>
-                                        <span className="text-slate-400">~</span>
-                                        <input type="date" value={analyticsEnd} onChange={e => setAnalyticsEnd(e.target.value)} className="bg-white rounded border border-slate-200 text-xs px-2 py-1.5 focus:ring-2 focus:ring-primary/20 outline-none text-slate-600 w-full sm:w-auto"/>
+                            <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200 w-full md:w-auto">
+                                <div className="flex items-center gap-2 flex-1 sm:flex-none">
+                                    <Calendar size={16} className="text-slate-400 ml-1 shrink-0"/>
+                                    <div className="flex items-center gap-1 flex-1">
+                                        <input type="date" value={analyticsStart} onChange={e => setAnalyticsStart(e.target.value)} className="bg-white border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-primary outline-none text-slate-700 w-full sm:w-32"/>
+                                        <span className="text-slate-300">~</span>
+                                        <input type="date" value={analyticsEnd} onChange={e => setAnalyticsEnd(e.target.value)} className="bg-white border rounded px-2 py-1 text-xs focus:ring-1 focus:ring-primary outline-none text-slate-700 w-full sm:w-32"/>
                                     </div>
                                 </div>
-                                <button onClick={() => loadData()} className="w-full sm:w-auto px-3 py-1.5 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 text-xs font-bold flex items-center justify-center gap-1 shadow-sm">
-                                    <RefreshCw size={14} className={loading ? "animate-spin" : ""}/> 
-                                    <span>조회</span>
-                                </button>
+                                <button onClick={() => loadData()} className="p-1.5 bg-white border rounded hover:bg-slate-50 ml-auto flex items-center justify-center min-w-[32px]"><RefreshCw size={14} className={loading ? "animate-spin" : ""}/></button>
                             </div>
                         </div>
 
-                        {/* Score Cards */}
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                             <div className="bg-blue-50/50 p-5 rounded-xl border border-blue-100">
                                 <div className="text-xs font-bold text-blue-600 mb-2 flex items-center gap-1"><Users size={14}/> 방문자 (신규/전체)</div>
@@ -549,13 +537,12 @@ create policy "Admins full access posts"
                                 <div className="text-xs text-slate-500 mt-1">클릭률 {analyticsMetrics.clickRate}%</div>
                             </div>
                             <div className="bg-purple-50/50 p-5 rounded-xl border border-purple-100">
-                                <div className="text-xs font-bold text-purple-600 mb-2 flex items-center gap-1"><DollarSign size={14}/> 결제 완료 (등급상향)</div>
+                                <div className="text-xs font-bold text-purple-600 mb-2 flex items-center gap-1"><DollarSign size={14}/> 결제 완료</div>
                                 <div className="text-2xl font-black text-slate-800">{analyticsMetrics.payments.toLocaleString()}</div>
-                                <div className="text-xs text-slate-500 mt-1">관리자 승인 포함</div>
+                                <div className="text-xs text-slate-500 mt-1">최종 등급 전환</div>
                             </div>
                         </div>
                         
-                        {/* Charts */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                             <div className="bg-white p-4 rounded-xl border border-slate-200 h-[300px]">
                                 <h4 className="text-sm font-bold text-slate-700 mb-4">일별 트래픽 추이</h4>
@@ -576,7 +563,7 @@ create policy "Admins full access posts"
                                 </ResponsiveContainer>
                             </div>
                             <div className="bg-white p-4 rounded-xl border border-slate-200 h-[300px]">
-                                <h4 className="text-sm font-bold text-slate-700 mb-4">주요 이벤트 발생 추이</h4>
+                                <h4 className="text-sm font-bold text-slate-700 mb-4">전환 이벤트 추이</h4>
                                 <ResponsiveContainer width="100%" height="90%">
                                     <BarChart data={analyticsMetrics.chartData}>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
@@ -590,9 +577,7 @@ create policy "Admins full access posts"
                                 </ResponsiveContainer>
                             </div>
                             <div className="bg-white p-4 rounded-xl border border-slate-200 h-[300px] lg:col-span-2">
-                                <div className="flex justify-between items-center mb-4">
-                                    <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2"><Globe size={16}/> 유입 경로 분석 (Referrer)</h4>
-                                </div>
+                                <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-4"><Globe size={16}/> 유입 경로 분석 (Traffic Source)</h4>
                                 <div className="flex h-full">
                                     <ResponsiveContainer width="100%" height="90%">
                                         <PieChart>
@@ -611,7 +596,7 @@ create policy "Admins full access posts"
                                                 ))}
                                             </Pie>
                                             <Tooltip contentStyle={{fontSize: '12px'}} />
-                                            <Legend wrapperStyle={{fontSize: '12px'}} />
+                                            <Legend wrapperStyle={{fontSize: '12px'}} verticalAlign="bottom" align="center" />
                                         </PieChart>
                                     </ResponsiveContainer>
                                 </div>
@@ -619,7 +604,6 @@ create policy "Admins full access posts"
                         </div>
                     </div>
                 ) : activeTab === 'logs' ? (
-                     // ... [Logs UI remains the same] ...
                      <div className="p-4 overflow-x-auto">
                         <table className="w-full text-left text-sm">
                            <thead className="bg-slate-50 border-b text-slate-500 text-xs font-bold uppercase tracking-wider">
@@ -638,7 +622,6 @@ create policy "Admins full access posts"
                        </table>
                    </div>
                 ) : activeTab === 'settings' ? (
-                    // ... [Settings UI remains the same] ...
                     <div className="p-8">
                         <div className="mb-6 pb-6 border-b border-slate-100">
                             <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-2"><Settings size={20} className="text-primary"/> 시스템 설정 관리</h3>
@@ -668,7 +651,6 @@ create policy "Admins full access posts"
                                             <input type="number" className="w-full border border-amber-200 rounded p-2 text-sm focus:ring-amber-500" value={settings.price_gold_sale} onChange={e => setSettings({...settings, price_gold_sale: e.target.value})} />
                                         </div>
                                     </div>
-                                    <p className="text-[10px] text-slate-400">* 판매가가 정상가보다 낮을 경우, 메인 화면에 자동으로 '할인 배지'가 표시됩니다.</p>
                                 </div>
 
                                 <h4 className="font-bold text-slate-700 flex items-center gap-2 pt-2"><LinkIcon size={16}/> 결제 및 구독 URL</h4>
@@ -700,7 +682,6 @@ create policy "Admins full access posts"
                                         <input type="text" className="w-full border rounded p-2 text-sm" value={settings.youtube_tutorial_convert} onChange={e => setSettings({...settings, youtube_tutorial_convert: e.target.value})} />
                                     </div>
                                 </div>
-
                                 <div className="pt-4 flex justify-end">
                                     <Button type="submit" size="lg" icon={<Check size={18}/>}>설정 저장하기</Button>
                                 </div>
@@ -708,7 +689,6 @@ create policy "Admins full access posts"
                         </form>
                     </div>
                 ) : (
-                    // ... [User Table UI remains the same] ...
                     <div className="p-4 overflow-x-auto">
                         <div className="mb-4 flex gap-2">
                              <div className="relative flex-1 max-w-md">
@@ -795,7 +775,6 @@ create policy "Admins full access posts"
                     </div>
                 )}
             </div>
-            
             <YouTubeEmbed url={settings.youtube_tutorial_convert} title="시스템 관리 가이드" />
         </div>
     );

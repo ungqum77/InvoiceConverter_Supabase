@@ -16,7 +16,7 @@ import { UserGuideList } from './pages/UserGuideList';
 import { UserGuidePage } from './pages/UserGuidePage';
 import { Privacy } from './pages/Privacy';
 import { Terms } from './pages/Terms';
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from './components/Button';
 import { trackEvent } from './services/dbService';
@@ -83,9 +83,21 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundarySta
 
 // 방문자 추적용 Wrapper
 const AnalyticsTracker: React.FC<{children: React.ReactNode}> = ({children}) => {
+    const { isAdmin, loading: authLoading } = useAuth();
+
     useEffect(() => {
+        // 인증 로딩 중이면 대기
+        if (authLoading) return;
+
         const visitLogged = sessionStorage.getItem('visit_logged');
         if (!visitLogged) {
+            // 관리자면 세션 표시만 하고 기록은 하지 않음
+            if (isAdmin) {
+                console.log("Admin visit detected - skipping analytics.");
+                sessionStorage.setItem('visit_logged', 'true');
+                return;
+            }
+
             const isNewVisitor = !localStorage.getItem('visited_before');
             
             // 유입 경로 분석 (Referrer & UTM)
@@ -109,7 +121,8 @@ const AnalyticsTracker: React.FC<{children: React.ReactNode}> = ({children}) => 
                 localStorage.setItem('visited_before', 'true');
             }
         }
-    }, []);
+    }, [authLoading, isAdmin]);
+
     return <>{children}</>;
 };
 
