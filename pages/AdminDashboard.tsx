@@ -257,14 +257,19 @@ create policy "Admins full access posts"
         try {
             setLoading(true);
             const isGuide = activeTab === 'guides';
+            
+            // [Fix] 블로그 포스트 저장 시 sort_order 제거 (DB 스키마 불일치 방지)
+            const { sort_order, ...restForm } = contentForm;
+            const blogPayload = restForm;
+
             if (editingContentId) {
                 if (isGuide) await updateUserGuide(editingContentId, contentForm);
-                else await updateBlogPost(editingContentId, contentForm);
+                else await updateBlogPost(editingContentId, blogPayload); // sort_order 제외된 객체 전달
                 localStorage.removeItem(`draft_${activeTab}_${editingContentId}`);
                 alert("수정되었습니다.");
             } else {
                 if (isGuide) await createUserGuide(contentForm);
-                else await createBlogPost(contentForm);
+                else await createBlogPost(blogPayload); // sort_order 제외된 객체 전달
                 localStorage.removeItem(`draft_${activeTab}_new`);
                 alert("등록되었습니다.");
             }
