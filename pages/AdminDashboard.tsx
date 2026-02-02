@@ -1,9 +1,9 @@
 
-import React, { useEffect, useState, useMemo } from 'react';
-import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, updateAppSettings, fetchAllTiers, updateTier, fetchAnalyticsStats, trackEvent, fetchBlogPosts, createBlogPost, updateBlogPost, deleteBlogPost, fetchUserGuides, createUserGuide, updateUserGuide, deleteUserGuide } from '../services/dbService';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { fetchAllProfiles, updateUserProfile, fetchAllActivityLogs, logActivity, fetchAppSettings, AppSettings, fetchAllTiers, updateTier, fetchAnalyticsStats, trackEvent, fetchBlogPosts, createBlogPost, updateBlogPost, deleteBlogPost, fetchUserGuides, createUserGuide, updateUserGuide, deleteUserGuide, updateAppSettings, uploadContentImage } from '../services/dbService';
 import { UserProfile, ActivityLog, Tier, AnalyticsEvent, BlogPost, UserGuide } from '../types';
 import { Button } from '../components/Button';
-import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database, CalendarPlus, BarChart2, PieChart as PieChartIcon, Activity, MousePointer2, BookOpen, PenTool, Eye, EyeOff, Trash2, Save, Book, Globe } from 'lucide-react';
+import { ShieldAlert, Search, Calendar, Check, X, Edit, Zap, Users, ScrollText, Lock, UserCog, Clock, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, AlertTriangle, Copy, Terminal, AlertOctagon, Settings, Link as LinkIcon, Youtube, ExternalLink, HelpCircle, UserPlus, Clock3, UserCheck, Shield, DollarSign, Tag, Merge, Database, CalendarPlus, BarChart2, PieChart as PieChartIcon, Activity, MousePointer2, BookOpen, PenTool, Eye, EyeOff, Trash2, Save, Book, Globe, Image as ImageIcon, Info, Upload, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, IS_CONFIG_ERROR } from '../services/supabase';
@@ -70,14 +70,32 @@ export const AdminDashboard: React.FC = () => {
     const [analyticsStart, setAnalyticsStart] = useState(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)); // 1 week ago
     const [analyticsEnd, setAnalyticsEnd] = useState(new Date().toISOString().slice(0, 10));
 
-    // Content Editing State (Shared for Blog & Guides)
+    // Content Editing State
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [editingContentId, setEditingContentId] = useState<string | null>(null);
-    const [contentForm, setContentForm] = useState({ title: '', slug: '', content: '', excerpt: '', is_published: false, sort_order: 0 });
+    const [contentForm, setContentForm] = useState({ 
+        title: '', 
+        slug: '', 
+        content: '', 
+        excerpt: '', 
+        thumbnail_url: '',
+        is_published: false, 
+        sort_order: 0 
+    });
     const [autoSaveStatus, setAutoSaveStatus] = useState<string>('');
+    const [isUploading, setIsUploading] = useState(false);
 
-    const SQL_SOLUTION = `-- [SQL] 사용설명서(User Guides) 및 블로그 테이블 생성 스크립트
--- 1. 사용설명서(User Guides) 테이블
+    const thumbnailInputRef = useRef<HTMLInputElement>(null);
+    const contentImageInputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    const SQL_SOLUTION = `-- [SQL] 이미지 저장소(Storage) 및 콘텐츠 테이블 생성 스크립트
+
+-- 1. 이미지 저장용 버켓 생성
+-- Supabase Storage UI에서 생성하는 것이 가장 확실하지만, 아래 SQL로도 가능합니다.
+-- insert into storage.buckets (id, name, public) values ('content-images', 'content-images', true);
+
+-- 2. 사용설명서(User Guides) 테이블
 create table if not exists public.user_guides (
   id uuid default gen_random_uuid() primary key,
   title text not null,
@@ -92,7 +110,7 @@ create table if not exists public.user_guides (
   updated_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 2. 블로그(Blog Posts) 테이블
+-- 3. 블로그(Blog Posts) 테이블
 create table if not exists public.blog_posts (
   id uuid default gen_random_uuid() primary key,
   title text not null,
@@ -107,27 +125,15 @@ create table if not exists public.blog_posts (
   updated_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 3. RLS(보안 정책) 설정 - User Guides
+-- 4. RLS(보안 정책) 설정 - User Guides
 alter table public.user_guides enable row level security;
+create policy "Public read published guides" on public.user_guides for select using ( is_published = true or (auth.uid() in (select id from profiles where role in ('admin', 'super_admin'))) );
+create policy "Admins full access guides" on public.user_guides for all using ( exists (select 1 from public.profiles where id = auth.uid() and role in ('admin', 'super_admin')) );
 
-create policy "Public read published guides"
-  on public.user_guides for select
-  using ( is_published = true or (auth.uid() in (select id from profiles where role in ('admin', 'super_admin'))) );
-
-create policy "Admins full access guides"
-  on public.user_guides for all
-  using ( exists (select 1 from public.profiles where id = auth.uid() and role in ('admin', 'super_admin')) );
-
--- 4. RLS(보안 정책) 설정 - Blog Posts
+-- 5. RLS(보안 정책) 설정 - Blog Posts
 alter table public.blog_posts enable row level security;
-
-create policy "Public read published posts"
-  on public.blog_posts for select
-  using ( is_published = true or (auth.uid() in (select id from profiles where role in ('admin', 'super_admin'))) );
-
-create policy "Admins full access posts"
-  on public.blog_posts for all
-  using ( exists (select 1 from public.profiles where id = auth.uid() and role in ('admin', 'super_admin')) );
+create policy "Public read published posts" on public.blog_posts for select using ( is_published = true or (auth.uid() in (select id from profiles where role in ('admin', 'super_admin'))) );
+create policy "Admins full access posts" on public.blog_posts for all using ( exists (select 1 from public.profiles where id = auth.uid() and role in ('admin', 'super_admin')) );
 `;
 
     useEffect(() => {
@@ -228,12 +234,12 @@ create policy "Admins full access posts"
         const draftKey = `draft_${activeTab}_${item?.id || 'new'}`;
         const savedDraft = localStorage.getItem(draftKey);
         
-        let initialForm = { title: '', slug: '', content: '', excerpt: '', is_published: false, sort_order: 0 };
+        let initialForm = { title: '', slug: '', content: '', excerpt: '', thumbnail_url: '', is_published: false, sort_order: 0 };
         if (item) {
             setEditingContentId(item.id);
             initialForm = { 
                 title: item.title, slug: item.slug, content: item.content, 
-                excerpt: item.excerpt || '', is_published: item.is_published,
+                excerpt: item.excerpt || '', thumbnail_url: item.thumbnail_url || '', is_published: item.is_published,
                 sort_order: item.sort_order || 0
             };
         } else {
@@ -258,18 +264,17 @@ create policy "Admins full access posts"
             setLoading(true);
             const isGuide = activeTab === 'guides';
             
-            // [Fix] 블로그 포스트 저장 시 sort_order 제거 (DB 스키마 불일치 방지)
-            const { sort_order, ...restForm } = contentForm;
-            const blogPayload = restForm;
+            const { sort_order, ...blogFields } = contentForm;
+            const payload = isGuide ? contentForm : blogFields;
 
             if (editingContentId) {
                 if (isGuide) await updateUserGuide(editingContentId, contentForm);
-                else await updateBlogPost(editingContentId, blogPayload); // sort_order 제외된 객체 전달
+                else await updateBlogPost(editingContentId, blogFields);
                 localStorage.removeItem(`draft_${activeTab}_${editingContentId}`);
                 alert("수정되었습니다.");
             } else {
                 if (isGuide) await createUserGuide(contentForm);
-                else await createBlogPost(blogPayload); // sort_order 제외된 객체 전달
+                else await createBlogPost(blogFields);
                 localStorage.removeItem(`draft_${activeTab}_new`);
                 alert("등록되었습니다.");
             }
@@ -285,6 +290,43 @@ create policy "Admins full access posts"
             else await deleteBlogPost(id);
             localStorage.removeItem(`draft_${activeTab}_${id}`);
             loadData();
+        }
+    };
+
+    /**
+     * 이미지 직접 업로드 처리
+     */
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'thumbnail' | 'content') => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        // 용량 제한 (5MB)
+        if (file.size > 5 * 1024 * 1024) {
+            alert("이미지 파일은 5MB 이하만 가능합니다.");
+            return;
+        }
+
+        setIsUploading(true);
+        try {
+            const publicUrl = await uploadContentImage(file);
+            if (target === 'thumbnail') {
+                setContentForm(prev => ({ ...prev, thumbnail_url: publicUrl }));
+            } else {
+                // 본문에 이미지 마크다운 자동 삽입
+                const cursorStart = textareaRef.current?.selectionStart || 0;
+                const cursorEnd = textareaRef.current?.selectionEnd || 0;
+                const oldContent = contentForm.content;
+                const markdownImage = `\n![이미지 설명](${publicUrl})\n`;
+                const newContent = oldContent.slice(0, cursorStart) + markdownImage + oldContent.slice(cursorEnd);
+                
+                setContentForm(prev => ({ ...prev, content: newContent }));
+            }
+        } catch (err: any) {
+            console.error("Upload failed:", err);
+            alert("업로드 실패: " + (err.message || "알 수 없는 오류"));
+        } finally {
+            setIsUploading(false);
+            if (e.target) e.target.value = '';
         }
     };
 
@@ -403,45 +445,102 @@ create policy "Admins full access posts"
                             <div>
                                 <div className="flex justify-between items-center mb-6">
                                     <h3 className="text-xl font-bold text-slate-800">{editingContentId ? '수정하기' : '새 글 작성'} ({activeTab === 'guides' ? '사용설명서' : '블로그'})</h3>
-                                    <Button variant="secondary" onClick={() => { if(confirm("취소하시겠습니까?")) setIsEditingContent(false); }} icon={<X size={16}/>}>취소</Button>
+                                    <div className="flex gap-2">
+                                        {isUploading && <div className="flex items-center gap-2 text-primary font-bold text-xs animate-pulse"><Loader2 className="animate-spin" size={14}/> 이미지 업로드 중...</div>}
+                                        <Button variant="secondary" onClick={() => { if(confirm("취소하시겠습니까?")) setIsEditingContent(false); }} icon={<X size={16}/>}>취소</Button>
+                                    </div>
                                 </div>
-                                <form onSubmit={handleSaveContent} className="space-y-4 max-w-4xl">
+                                <form onSubmit={handleSaveContent} className="space-y-6 max-w-4xl">
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-sm font-bold text-slate-600 mb-1">제목</label>
-                                            <input className="w-full border p-2 rounded" value={contentForm.title} onChange={e => setContentForm({...contentForm, title: e.target.value})} placeholder="글 제목" />
+                                            <input className="w-full border p-2 rounded focus:ring-2 focus:ring-primary/20 outline-none" value={contentForm.title} onChange={e => setContentForm({...contentForm, title: e.target.value})} placeholder="글 제목" />
                                         </div>
                                         <div>
                                             <label className="block text-sm font-bold text-slate-600 mb-1">URL Slug (예: guide-1)</label>
-                                            <input className="w-full border p-2 rounded font-mono text-sm" value={contentForm.slug} onChange={e => setContentForm({...contentForm, slug: e.target.value})} placeholder="url-slug" />
+                                            <input className="w-full border p-2 rounded font-mono text-sm focus:ring-2 focus:ring-primary/20 outline-none" value={contentForm.slug} onChange={e => setContentForm({...contentForm, slug: e.target.value})} placeholder="url-slug" />
                                         </div>
                                     </div>
+
+                                    <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200/60">
+                                        <label className="block text-sm font-bold text-slate-600 mb-3 flex items-center gap-1.5"><ImageIcon size={14}/> 대표 이미지 (Thumbnail)</label>
+                                        <div className="flex flex-col sm:flex-row gap-6 items-start">
+                                            <div className="w-full sm:w-48 aspect-video rounded-xl border-2 border-dashed border-slate-200 bg-white overflow-hidden flex items-center justify-center group relative">
+                                                {contentForm.thumbnail_url ? (
+                                                    <>
+                                                        <img src={contentForm.thumbnail_url} className="w-full h-full object-cover" alt="Preview" />
+                                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                            <button type="button" onClick={() => thumbnailInputRef.current?.click()} className="p-2 bg-white rounded-full text-slate-700 shadow-xl"><Upload size={18}/></button>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <button type="button" onClick={() => thumbnailInputRef.current?.click()} className="flex flex-col items-center gap-2 text-slate-400 hover:text-primary transition-colors">
+                                                        <Upload size={24}/>
+                                                        <span className="text-[10px] font-bold">사진 올리기</span>
+                                                    </button>
+                                                )}
+                                                <input type="file" accept="image/*" className="hidden" ref={thumbnailInputRef} onChange={(e) => handleFileUpload(e, 'thumbnail')} />
+                                            </div>
+                                            <div className="flex-1 space-y-3">
+                                                <p className="text-xs text-slate-500 leading-relaxed font-medium">목록 상단에 표시될 메인 이미지입니다.<br/>이미지를 직접 올리거나 외부 주소를 입력할 수 있습니다.</p>
+                                                <input className="w-full border p-2 rounded text-[11px] font-mono focus:ring-2 focus:ring-primary/20 outline-none bg-white" value={contentForm.thumbnail_url} onChange={e => setContentForm({...contentForm, thumbnail_url: e.target.value})} placeholder="또는 직접 이미지 주소 입력 (https://...)" />
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label className="block text-sm font-bold text-slate-600 mb-1">요약 (Excerpt)</label>
-                                            <input className="w-full border p-2 rounded" value={contentForm.excerpt} onChange={e => setContentForm({...contentForm, excerpt: e.target.value})} placeholder="목록에 표시될 짧은 설명" />
+                                            <input className="w-full border p-2 rounded focus:ring-2 focus:ring-primary/20 outline-none" value={contentForm.excerpt} onChange={e => setContentForm({...contentForm, excerpt: e.target.value})} placeholder="목록에 표시될 짧은 설명" />
                                         </div>
                                         {activeTab === 'guides' && (
                                             <div>
                                                 <label className="block text-sm font-bold text-slate-600 mb-1">정렬 순서</label>
-                                                <input type="number" className="w-full border p-2 rounded" value={contentForm.sort_order} onChange={e => setContentForm({...contentForm, sort_order: Number(e.target.value)})} placeholder="0 (낮은 순서대로 정렬)" />
+                                                <input type="number" className="w-full border p-2 rounded focus:ring-2 focus:ring-primary/20 outline-none" value={contentForm.sort_order} onChange={e => setContentForm({...contentForm, sort_order: Number(e.target.value)})} placeholder="0 (낮은 순서대로 정렬)" />
                                             </div>
                                         )}
                                     </div>
+
                                     <div>
-                                        <label className="block text-sm font-bold text-slate-600 mb-1">본문 (Markdown 지원)</label>
-                                        <textarea className="w-full border p-2 rounded h-80 font-mono text-sm" value={contentForm.content} onChange={e => setContentForm({...contentForm, content: e.target.value})} placeholder="**Markdown** 형식으로 작성하세요." />
-                                        <div className="flex justify-between items-center mt-1">
-                                            <p className="text-xs text-slate-400">* 굵게(**text**), 이미지(![alt](url)) 등 마크다운 사용 가능</p>
-                                            {autoSaveStatus && <p className="text-xs font-bold text-green-600 flex items-center gap-1 animate-pulse"><Save size={12}/> {autoSaveStatus}</p>}
+                                        <div className="flex justify-between items-end mb-1.5">
+                                            <label className="block text-sm font-bold text-slate-600">본문 내용</label>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => contentImageInputRef.current?.click()}
+                                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-black hover:bg-blue-100 transition-colors border border-blue-100"
+                                                >
+                                                    <Upload size={14}/> 본문에 사진 삽입하기
+                                                </button>
+                                                <input type="file" accept="image/*" className="hidden" ref={contentImageInputRef} onChange={(e) => handleFileUpload(e, 'content')} />
+                                            </div>
+                                        </div>
+                                        
+                                        <textarea 
+                                            ref={textareaRef}
+                                            className="w-full border p-4 rounded-xl h-96 font-mono text-sm focus:ring-4 focus:ring-primary/5 outline-none resize-y shadow-inner bg-white leading-relaxed" 
+                                            value={contentForm.content} 
+                                            onChange={e => setContentForm({...contentForm, content: e.target.value})} 
+                                            placeholder="본문 내용을 입력하세요. 위 버튼을 이용해 사진을 쉽게 삽입할 수 있습니다." 
+                                        />
+                                        
+                                        <div className="flex justify-between items-center mt-3 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                                            <div className="flex items-center gap-4 text-[11px] text-slate-400">
+                                                <span className="flex items-center gap-1"><Check size={14} className="text-green-500"/> 자동 이미지 삽입 지원</span>
+                                                <span className="flex items-center gap-1"><Check size={14} className="text-green-500"/> 마크다운 문법 지원</span>
+                                            </div>
+                                            {autoSaveStatus && <p className="text-[11px] font-bold text-green-600 flex items-center gap-1 animate-pulse"><Save size={12}/> {autoSaveStatus}</p>}
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <input type="checkbox" id="published" checked={contentForm.is_published} onChange={e => setContentForm({...contentForm, is_published: e.target.checked})} />
-                                        <label htmlFor="published" className="text-sm font-bold text-slate-700">바로 공개하기</label>
+
+                                    <div className="flex items-center gap-2 pt-2">
+                                        <input type="checkbox" id="published" checked={contentForm.is_published} onChange={e => setContentForm({...contentForm, is_published: e.target.checked})} className="w-5 h-5 rounded text-primary focus:ring-primary/20 border-slate-300" />
+                                        <label htmlFor="published" className="text-sm font-bold text-slate-700 cursor-pointer">이 글을 사용자에게 즉시 공개</label>
                                     </div>
-                                    <div className="flex justify-end pt-4">
-                                        <Button type="submit" icon={<Check size={16}/>}>저장하기</Button>
+                                    
+                                    <div className="flex justify-end pt-6 gap-3 border-t border-slate-100">
+                                        <Button variant="secondary" size="lg" onClick={() => setIsEditingContent(false)}>취소</Button>
+                                        <Button type="submit" size="lg" icon={<Check size={20}/>} isLoading={loading}>콘텐츠 저장하기</Button>
                                     </div>
                                 </form>
                             </div>
@@ -464,6 +563,7 @@ create policy "Admins full access posts"
                                     <table className="w-full text-left text-sm">
                                         <thead className="bg-slate-50 border-b text-slate-500 text-xs font-bold uppercase">
                                             <tr>
+                                                <th className="px-4 py-3">썸네일</th>
                                                 <th className="px-4 py-3">제목 / Slug</th>
                                                 <th className="px-4 py-3">상태</th>
                                                 {activeTab === 'guides' && <th className="px-4 py-3">순서</th>}
@@ -473,10 +573,17 @@ create policy "Admins full access posts"
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
                                             {(activeTab === 'guides' ? userGuides : blogPosts).length === 0 ? (
-                                                <tr><td colSpan={5} className="p-8 text-center text-slate-400">작성된 글이 없습니다.</td></tr>
+                                                <tr><td colSpan={6} className="p-8 text-center text-slate-400">작성된 글이 없습니다.</td></tr>
                                             ) : (
                                                 (activeTab === 'guides' ? userGuides : blogPosts).map(item => (
                                                     <tr key={item.id} className="hover:bg-slate-50">
+                                                        <td className="px-4 py-3">
+                                                            {item.thumbnail_url ? (
+                                                                <img src={item.thumbnail_url} className="w-12 h-8 object-cover rounded border" alt="Thumb" />
+                                                            ) : (
+                                                                <div className="w-12 h-8 bg-slate-100 rounded border flex items-center justify-center text-slate-300"><ImageIcon size={12}/></div>
+                                                            )}
+                                                        </td>
                                                         <td className="px-4 py-3">
                                                             <div className="font-bold text-slate-800">{item.title}</div>
                                                             <div className="text-xs text-slate-400 font-mono">/{item.slug}</div>

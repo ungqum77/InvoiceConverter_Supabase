@@ -44,12 +44,17 @@ export const ProductManagement: React.FC = () => {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [stats, setStats] = useState({ productCount: 0, templateCount: 0 });
+  // Fix: Initial state for appSettings was missing price properties required by AppSettings type
   const [appSettings, setAppSettings] = useState<AppSettings>({
     silver_subscription_url: '',
     gold_subscription_url: '',
     youtube_tutorial_template: '',
     youtube_tutorial_product: '',
-    youtube_tutorial_convert: ''
+    youtube_tutorial_convert: '',
+    price_silver_original: '',
+    price_silver_sale: '',
+    price_gold_original: '',
+    price_gold_sale: ''
   });
   const [loading, setLoading] = useState(true);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);

@@ -181,6 +181,7 @@ export const fetchProducts = async (): Promise<Product[]> => {
   }
   return [];
 };
+// Fix errors by correctly mapping product properties from camelCase to snake_case for Supabase insert
 export const createProduct = async (product: Omit<Product, 'id' | 'user_id'>): Promise<Product> => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('인증이 만료되었습니다.');
@@ -202,6 +203,7 @@ export const createProduct = async (product: Omit<Product, 'id' | 'user_id'>): P
   await logActivity(user.id, 'CREATE_PRODUCT', `제품 '${product.sku}' 등록`);
   return mapProductFromDB(data);
 };
+// Fix errors by correctly mapping bulk product properties from camelCase to snake_case for Supabase insert
 export const createProductsBulk = async (products: Omit<Product, 'id' | 'user_id'>[]) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
@@ -368,6 +370,32 @@ export const fetchAnalyticsStats = async (startDate: string, endDate: string) =>
         console.error("Analytics fetch error:", e);
         return [];
     }
+};
+
+// --- Storage Service (New for Direct Image Upload) ---
+
+/**
+ * 이미지를 Supabase Storage에 업로드하고 공용 URL을 반환합니다.
+ */
+export const uploadContentImage = async (file: File): Promise<string> => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    
+    // 파일명 중복 방지를 위해 타임스탬프와 랜덤값 추가
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`;
+    const filePath = `uploads/${fileName}`;
+
+    const { data, error } = await supabase.storage
+        .from('content-images')
+        .upload(filePath, file);
+
+    if (error) throw error;
+
+    const { data: { publicUrl } } = supabase.storage
+        .from('content-images')
+        .getPublicUrl(filePath);
+
+    return publicUrl;
 };
 
 // --- Blog Service ---
