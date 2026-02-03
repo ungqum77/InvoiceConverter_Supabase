@@ -403,13 +403,20 @@ create policy "Admins full access posts" on public.blog_posts for all using ( ex
                         <p className="text-sm text-slate-500">사용자 권한, 시스템 로그 및 콘텐츠 관리</p>
                     </div>
                 </div>
-                <div className="flex bg-slate-100 p-1 rounded-lg overflow-x-auto">
-                    <button onClick={() => setActiveTab('users')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'users' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>사용자</button>
-                    {isSuperAdmin && <button onClick={() => setActiveTab('analytics')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'analytics' ? 'bg-white text-indigo-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>CRM</button>}
-                    <button onClick={() => setActiveTab('guides')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'guides' ? 'bg-white text-green-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>가이드(사용설명서)</button>
-                    <button onClick={() => setActiveTab('blog')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'blog' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>블로그</button>
-                    <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>설정</button>
-                    <button onClick={() => setActiveTab('logs')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'logs' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>로그</button>
+                
+                <div className="flex flex-col sm:flex-row gap-3 items-end sm:items-center">
+                    <button onClick={() => navigate('/admin/match')} className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2 whitespace-nowrap">
+                        <Merge size={16}/> 배송 매칭 도구
+                    </button>
+
+                    <div className="flex bg-slate-100 p-1 rounded-lg overflow-x-auto max-w-full">
+                        <button onClick={() => setActiveTab('users')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'users' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>사용자</button>
+                        {isSuperAdmin && <button onClick={() => setActiveTab('analytics')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'analytics' ? 'bg-white text-indigo-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>CRM</button>}
+                        <button onClick={() => setActiveTab('guides')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'guides' ? 'bg-white text-green-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>가이드(사용설명서)</button>
+                        <button onClick={() => setActiveTab('blog')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'blog' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:text-slate-700'}`}>블로그</button>
+                        <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>설정</button>
+                        <button onClick={() => setActiveTab('logs')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${activeTab === 'logs' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>로그</button>
+                    </div>
                 </div>
             </div>
 
