@@ -21,15 +21,15 @@ export const Footer: React.FC = () => {
         
         <div className="mt-8 pt-6 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
             <div className="text-[10px] text-slate-400 flex flex-col sm:flex-row gap-1 sm:gap-3 text-center sm:text-left items-center flex-wrap justify-center md:justify-start">
-                <span>상호: 웰나스코어</span>
+                <span>상호: (주)미성상회</span>
                 <span className="hidden sm:inline">|</span>
-                <span>문의: ungqum77@gmail.com</span>
+                <span>문의: misungcorp@gmail.com</span>
                 <span className="hidden sm:inline">|</span>
-                <span>사업자등록번호: 801-15-02098</span>
+                <span>사업자등록번호: 551-87-02467</span>
                 <span className="hidden sm:inline">|</span>
-                <span>통신판매업신고: 2023-창원성산-0414호</span>
+                <span>통신판매업신고: 제2022-창원성산-0792호</span>
             </div>
-            <p className="text-[10px] text-slate-400 whitespace-nowrap">© 2024 웰나스코어. All rights reserved.</p>
+            <p className="text-[10px] text-slate-400 whitespace-nowrap">© 2024 (주)미성상회. All rights reserved.</p>
         </div>
       </div>
     </footer>
