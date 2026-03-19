@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>송장닷컴 (songjang.com)</title>
+    <link>https://songjang.com</link>
+    <description>무료 송장변환</description>
+    <language>ko-kr</language>
+    
+    <item>
+      <title>무료 송장 변환</title>
+      <link>https://songjang.com/blog/invoice-guide</link>
+      <description>모든 송장을 발주처에 맞도록 무료로 바꿔보세요</description>
+      <pubDate>Thu, 19 Mar 2026 09:00:00 +0900</pubDate>
+      <guid>https://songjang.com/blog/invoice-guide</guid>
+    </item>
+    
+  </channel>
+</rss>
