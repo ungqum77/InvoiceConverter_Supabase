@@ -92,6 +92,34 @@ export const InvoiceConverter: React.FC = () => {
             return rowObj;
         });
         const validRows = rows.filter(r => Object.values(r).some(v => String(v).trim() !== ''));
+
+        // === 인공지능 기반 컬럼 자동 매칭 로직 ===
+        // 유사어 리스트를 기반으로 가장 적합한 컬럼 헤더를 자동으로 찾아냅니다.
+        const findMatch = (hdrs: string[], synonyms: string[]) => {
+            const clean = (s: string) => String(s).replace(/[\s_]+/g, '').toLowerCase();
+            const synClean = synonyms.map(clean);
+            // 1. 정확히 일치하는 단어가 있는지 우선 확인
+            for (const h of hdrs) {
+                if (synClean.includes(clean(h))) return h;
+            }
+            // 2. 부분적으로 포함되어 있는지 확인 (ex. "옵션id(필수)" -> "옵션id" 포함)
+            for (const h of hdrs) {
+                const cleanH = clean(h);
+                if (synClean.some(s => cleanH.includes(s) || s.includes(cleanH))) return h;
+            }
+            return '';
+        };
+
+        setMapping({
+            sku: findMatch(uniqueHeaders, ['옵션id', '옵션번호', 'sku', '상품코드', '옵션코드', '품목코드', '아이디']),
+            productName: findMatch(uniqueHeaders, ['등록상품명', '상품명', '제품명', '등록제품명', '옵션명', '품목명', '물품명', 'productname', 'itemname']),
+            orderer: findMatch(uniqueHeaders, ['주문자', '구매자', '주문자명', '구매자명', '주문자이름', '구매자이름', '주문하시는분', '주문인']),
+            receiver: findMatch(uniqueHeaders, ['수취인', '받는사람', '수취인명', '수취인성명', '수취인이름', '받으시는분', '수령인', '수령자']),
+            orderId: findMatch(uniqueHeaders, ['상품주문번호', '주문번호', '상품오더번호', '오더번호', '결제번호', 'orderno', '주문번호(선택)']),
+            quantity: findMatch(uniqueHeaders, ['수량', '구매수', '구매수량', '구매량', '주문수량', 'qty', 'quantity', '주문건수']),
+            option: findMatch(uniqueHeaders, ['옵션정보', '선택옵션', '상품옵션', '옵션', '옵션명', '옵션내용'])
+        });
+
         setHeaders(uniqueHeaders);
         setRawRows(validRows);
         setStep(2);
