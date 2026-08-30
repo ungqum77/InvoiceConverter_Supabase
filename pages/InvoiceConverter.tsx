@@ -12,6 +12,15 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
 const QUANTITY_HEADERS = ['수량', '주문수량', '구매수량', '개수', 'qty', 'quantity'];
+
+/**
+ * 주문서는 raw:false 로 읽는다 — 그래야 전화번호 01012345678 이나 우편번호 00000 의
+ * 앞자리 0 이 살아남는다. 대신 모든 셀이 문자열이 되어 수량·금액 열에서 SUM 이 안 된다.
+ * 그래서 '숫자여야 하는 열' 만 골라 다시 숫자로 되돌린다.
+ */
+const NUMERIC_HEADERS = ['수량', '개수', '금액', '가격', '단가', '합계', '공급가', '부가세', '총액', 'qty', 'quantity', 'amount', 'price'];
+/** 숫자처럼 보여도 문자열로 둬야 하는 열 (앞자리 0 이 의미를 가진다) */
+const NEVER_NUMERIC = ['번호', '전화', '휴대폰', '핸드폰', '우편', '코드', 'id', '사업자', '운송장', '주소'];
 const PRODUCT_NAME_HEADERS = ['상품명', '품목명', '내용물', '물품명', '상품이름', '제품명', '제품', 'Product Name', 'Item Name', 'Product', 'Item'];
 
 /** 발주처별 정산 집계 */
@@ -404,6 +413,17 @@ export const InvoiceConverter: React.FC = () => {
       const n = normalizeHeader(h);
       return !!n && QUANTITY_HEADERS.some(q => n === normalizeHeader(q));
     };
+    const isNumericCol = (h: string) => {
+      const n = normalizeHeader(h);
+      if (!n || NEVER_NUMERIC.some(w => n.includes(normalizeHeader(w)))) return false;
+      return NUMERIC_HEADERS.some(w => n.includes(normalizeHeader(w)));
+    };
+    /** 숫자 열이고 값이 순수한 숫자 문자열이면 숫자로 되돌린다 */
+    const asCell = (h: string, v: any) => {
+      if (!isNumericCol(h)) return v;
+      const t = String(v ?? '').trim().replace(/,/g, '');
+      return t !== '' && /^-?d+(.d+)?$/.test(t) ? Number(t) : v;
+    };
 
     // 묶을 수 있는 것만 골라 수취인+주소로 모은다. 나머지는 순서를 지켜 그대로 둔다.
     const buckets = new Map<string, MatchedOrder[]>();
@@ -438,7 +458,7 @@ export const InvoiceConverter: React.FC = () => {
         if (o.quantity > 1) finalName += ` (${o.quantity}개)`;
         finalName += senderSuffix([o], rev);
         const rowData = tpl.headers.map((h: string) =>
-          isProductCol(h) ? finalName : cellValue(o, group.templateId, h));
+          isProductCol(h) ? finalName : asCell(h, cellValue(o, group.templateId, h)));
         rows.push({ rowData, orders: [o] });
         continue;
       }
@@ -457,7 +477,7 @@ export const InvoiceConverter: React.FC = () => {
       const rowData = tpl.headers.map((h: string) => {
         if (isProductCol(h)) return finalName;
         if (isQtyCol(h)) return 1;            // 송장 한 장 = 박스 하나
-        return cellValue(head, group.templateId, h);
+        return asCell(h, cellValue(head, group.templateId, h));
       });
       rows.push({ rowData, orders: bucket });
     }
