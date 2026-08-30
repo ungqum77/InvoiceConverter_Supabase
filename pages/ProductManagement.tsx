@@ -10,6 +10,7 @@ import { Button } from '../components/Button';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BulkProductImport } from '../components/BulkProductImport';
+import { SupplierFormModal, SupplierForm, BLANK_SUPPLIER } from '../components/SupplierFormModal';
 
 const YouTubeEmbed = ({ url, title }: { url: string; title: string }) => {
     if (!url) return null;
@@ -87,8 +88,7 @@ export const ProductManagement: React.FC = () => {
   const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
   const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
   const [isMigrating, setIsMigrating] = useState(false);
-  const blankSupplier = { name: '', code: '', manager: '', phone: '', email: '', bizNo: '', paymentTerms: '', vatIncluded: true, memo: '' };
-  const [supplierForm, setSupplierForm] = useState<Omit<Supplier, 'id' | 'user_id'>>(blankSupplier);
+  const [supplierInitial, setSupplierInitial] = useState<SupplierForm>(BLANK_SUPPLIER);
 
   const templateFileRef = useRef<HTMLInputElement>(null);
   const [isTemplateUploading, setIsTemplateUploading] = useState(false);
@@ -232,34 +232,20 @@ export const ProductManagement: React.FC = () => {
   /* ------------------------- 발주처 관리 ------------------------- */
 
   const openSupplierModal = (s?: Supplier) => {
-    if (s) {
-      setEditingSupplierId(s.id);
-      setSupplierForm({
-        name: s.name, code: s.code || '', manager: s.manager || '', phone: s.phone || '',
-        email: s.email || '', bizNo: s.bizNo || '', paymentTerms: s.paymentTerms || '',
-        vatIncluded: s.vatIncluded, memo: s.memo || '',
-      });
-    } else {
-      setEditingSupplierId(null);
-      setSupplierForm(blankSupplier);
-    }
+    setEditingSupplierId(s?.id ?? null);
+    setSupplierInitial(s ? {
+      name: s.name, code: s.code || '', manager: s.manager || '', phone: s.phone || '',
+      email: s.email || '', bizNo: s.bizNo || '', paymentTerms: s.paymentTerms || '',
+      vatIncluded: s.vatIncluded, memo: s.memo || '',
+    } : BLANK_SUPPLIER);
     setIsSupplierModalOpen(true);
   };
 
-  const handleSupplierSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const name = supplierForm.name.trim();
-    if (!name) return;
-    if (suppliers.some(s => s.name.trim() === name && s.id !== editingSupplierId)) {
-      alert(`이미 등록된 발주처입니다: ${name}`);
-      return;
-    }
-    try {
-      if (editingSupplierId) await updateSupplier(editingSupplierId, supplierForm);
-      else await createSupplier(supplierForm);
-      setIsSupplierModalOpen(false);
-      loadData();
-    } catch (err: any) { alert(err.message); }
+  const handleSupplierSave = async (form: SupplierForm) => {
+    if (editingSupplierId) await updateSupplier(editingSupplierId, form);
+    else await createSupplier(form);
+    setIsSupplierModalOpen(false);
+    await loadData();
   };
 
   const handleSupplierDelete = async (s: Supplier) => {
@@ -778,62 +764,15 @@ export const ProductManagement: React.FC = () => {
         </div>
       )}
 
-      {isSupplierModalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-fade-in my-8">
-            <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2"><Building2 size={18}/> {editingSupplierId ? '발주처 수정' : '발주처 등록'}</h3>
-              <button onClick={() => setIsSupplierModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-            </div>
-            <form onSubmit={handleSupplierSubmit} className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">발주처명 (필수)</label>
-                <input required autoFocus placeholder="예: (주)한일식품" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-                  value={supplierForm.name} onChange={e => setSupplierForm({ ...supplierForm, name: e.target.value })} />
-              </div>
-              {([
-                ['code', '관리 코드', '예: A01'],
-                ['manager', '담당자', '예: 김철수'],
-                ['phone', '연락처', '예: 010-1234-5678'],
-                ['email', '이메일', '예: kim@hanil.co.kr'],
-                ['bizNo', '사업자등록번호', '예: 123-45-67890'],
-                ['paymentTerms', '결제조건', '예: 월말결산 익월 15일'],
-              ] as [keyof typeof supplierForm, string, string][]).map(([key, label, ph]) => (
-                <div key={String(key)}>
-                  <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">{label}</label>
-                  <input placeholder={ph} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-                    value={String(supplierForm[key] ?? '')} onChange={e => setSupplierForm({ ...supplierForm, [key]: e.target.value })} />
-                </div>
-              ))}
-              <div className="md:col-span-2 bg-slate-50 border border-slate-100 rounded-lg p-4">
-                <div className="text-xs font-bold text-slate-700 mb-2">제품에 등록한 매입가의 기준</div>
-                <div className="flex gap-2">
-                  {([[true, '부가세 포함가'], [false, '부가세 별도']] as [boolean, string][]).map(([v, label]) => (
-                    <button key={String(v)} type="button" onClick={() => setSupplierForm({ ...supplierForm, vatIncluded: v })}
-                      className={`flex-1 py-2.5 rounded-lg text-xs font-bold border transition-colors ${supplierForm.vatIncluded === v ? 'bg-primary text-white border-primary' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                  <b>부가세 포함가</b>: 매입가 10,000원 → 공급가액 9,091 + 부가세 909 = 지급액 10,000원<br/>
-                  <b>부가세 별도</b>: 매입가 10,000원 → 공급가액 10,000 + 부가세 1,000 = 지급액 11,000원<br/>
-                  기존 데이터와 금액이 달라지지 않도록 기본값은 '부가세 포함가'입니다.
-                </p>
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">메모</label>
-                <input className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-                  value={supplierForm.memo || ''} onChange={e => setSupplierForm({ ...supplierForm, memo: e.target.value })} />
-              </div>
-              <div className="md:col-span-2 flex justify-end gap-2 pt-4 border-t border-slate-100">
-                <button type="button" onClick={() => setIsSupplierModalOpen(false)} className="px-5 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">취소</button>
-                <button type="submit" className="px-6 py-2.5 text-sm font-bold text-white bg-primary rounded-lg hover:bg-primary-hover transition-all shadow-lg shadow-primary/20">저장</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <SupplierFormModal
+        key={editingSupplierId ?? 'new'}
+        open={isSupplierModalOpen}
+        editing={!!editingSupplierId}
+        initial={supplierInitial}
+        takenNames={suppliers.filter(s => s.id !== editingSupplierId).map(s => s.name)}
+        onClose={() => setIsSupplierModalOpen(false)}
+        onSave={handleSupplierSave}
+      />
 
       <BulkProductImport
         open={isBulkModalOpen}

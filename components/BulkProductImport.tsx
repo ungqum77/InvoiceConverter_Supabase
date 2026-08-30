@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { ClipboardPaste, FileSpreadsheet, Download, Plus, Trash2, AlertTriangle, Check, X, Wand2 } from 'lucide-react';
 import { Product, InvoiceTemplate, Supplier, VatType } from '../types';
+import { buildBulkSampleWorkbook, downloadBlob } from '../services/bulkSample';
 
 /**
  * 제품 대량 등록.
@@ -236,16 +237,18 @@ export const BulkProductImport: React.FC<Props> = ({
     e.target.value = '';
   };
 
-  const downloadSample = () => {
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet([{
-      'SKU': 'A-001', '제품명': '양파 10kg', '별칭': '햇양파 10kg(대)', '별칭사용': 'Y',
-      '발주처': suppliers[0]?.name || '한일식품',
-      '송장양식': templates[0]?.name || '기본양식', '매입가': 12000, '판매가': 19000,
-      '배송비': 3000, '기타비용': 0, '수수료율': 10, '과세구분': '과세',
-    }]);
-    XLSX.utils.book_append_sheet(wb, ws, 'Sample');
-    XLSX.writeFile(wb, '제품_대량등록_양식.xlsx');
+  // 송장양식·발주처는 DB에 있는 이름을 두 번째 시트에 깔고 드롭다운으로 고르게 한다.
+  const downloadSample = async () => {
+    try {
+      const blob = await buildBulkSampleWorkbook({
+        templateNames: templates.map(t => t.name),
+        supplierNames: suppliers.map(s => s.name),
+        useSupplierMaster,
+      });
+      downloadBlob(blob, '제품_대량등록_양식.xlsx');
+    } catch (err: any) {
+      alert('샘플 파일을 만들지 못했습니다: ' + (err?.message || err));
+    }
   };
 
   // ── 검증 ──────────────────────────────────────────────────────────────────
@@ -341,6 +344,11 @@ export const BulkProductImport: React.FC<Props> = ({
               <p className="font-bold text-slate-800 mb-1">엑셀에서 복사해서 아래에 붙여넣으세요 (Ctrl+V)</p>
               <p>제목 줄이 있어도 되고 없어도 됩니다. 어느 열이 무엇인지는 자동으로 잡고,
                  틀린 곳은 다음 화면의 표에서 바로 고칠 수 있습니다.</p>
+              <p className="mt-1.5 text-slate-500">
+                엑셀에서 미리 작성하실 거라면 <b>샘플 받기</b>를 쓰세요. 등록해둔
+                <b> 송장양식 {templates.length}개</b>{useSupplierMaster && <>· <b>발주처 {suppliers.length}개</b></>}가
+                드롭다운으로 들어 있어 이름을 손으로 칠 필요가 없습니다.
+              </p>
             </div>
 
             <textarea
@@ -367,9 +375,9 @@ export const BulkProductImport: React.FC<Props> = ({
                 <FileSpreadsheet size={14} /> 엑셀 파일로 올리기
               </button>
               <input type="file" accept=".xlsx,.xls,.csv" ref={fileRef} className="hidden" onChange={handleFile} />
-              <button onClick={downloadSample}
+              <button onClick={downloadSample} title="등록된 송장양식·발주처가 드롭다운으로 들어간 엑셀을 받습니다"
                 className="flex items-center gap-1.5 px-3 py-2 text-slate-500 rounded-lg text-xs font-bold hover:bg-slate-100">
-                <Download size={14} /> 샘플 받기
+                <Download size={14} /> 샘플 받기 (드롭다운 포함)
               </button>
             </div>
           </div>
