@@ -65,6 +65,16 @@ export const similarity = (a: string, b: string): number => {
 
 export const SIMILARITY_THRESHOLD = 0.75;
 
+/**
+ * 주소 비교용 정규화. 묶음배송에서 같은 집인지 판단할 때 쓴다.
+ *
+ * 같은 집도 표기가 갈린다.  "101동 1201호" / "101-1201" / "101 1201"
+ * 숫자 뒤에 붙은 동·호·층·번지 표시를 떼고 나머지는 headerMatch 규칙(공백·기호 제거)을
+ * 그대로 적용해 세 가지가 같은 값이 되게 한다.
+ */
+export const normalizeAddress = (s: unknown): string =>
+  normalizeHeader(String(s ?? '').replace(/(\d)\s*(동|호|층|번지)/g, '$1'));
+
 export interface ResolveOptions {
   /** 양식 열별 별칭. headers 와 같은 순서 */
   aliases?: string[][];

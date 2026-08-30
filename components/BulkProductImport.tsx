@@ -16,7 +16,7 @@ import { buildBulkSampleWorkbook, downloadBlob } from '../services/bulkSample';
 // ── 붙여넣은 열이 무엇인지 ──────────────────────────────────────────────────
 type FieldKey =
   | 'ignore' | 'sku' | 'name' | 'supplier' | 'template' | 'additionalName' | 'useAlias'
-  | 'purchaseCost' | 'salesPrice' | 'shippingCost' | 'otherCost' | 'marketFeeRate' | 'vatType';
+  | 'purchaseCost' | 'salesPrice' | 'shippingCost' | 'otherCost' | 'marketFeeRate' | 'vatType' | 'bundleShipping';
 
 const FIELD_LABELS: { key: FieldKey; label: string }[] = [
   { key: 'ignore',         label: '무시' },
@@ -32,6 +32,7 @@ const FIELD_LABELS: { key: FieldKey; label: string }[] = [
   { key: 'otherCost',      label: '기타비용' },
   { key: 'marketFeeRate',  label: '수수료율' },
   { key: 'vatType',        label: '과세구분' },
+  { key: 'bundleShipping', label: '묶음배송' },
 ];
 
 // 헤더 자동 인식용. 부분 일치라서 'SKU(필수)', '매입단가' 같은 것도 잡힌다.
@@ -48,6 +49,7 @@ const ALIASES: { key: FieldKey; words: string[] }[] = [
   { key: 'shippingCost',   words: ['배송', '택배'] },
   { key: 'otherCost',      words: ['기타'] },
   { key: 'marketFeeRate',  words: ['수수료'] },
+  { key: 'bundleShipping', words: ['묶음배송', '묶음', '합배송', '합포장'] },
   { key: 'vatType',        words: ['과세', '면세', '부가세'] },
 ];
 
@@ -78,15 +80,21 @@ interface DraftRow {
   otherCost: string;
   marketFeeRate: string;
   vatType: VatType;
+  bundleShipping: boolean;
 }
 
 const blankRow = (key: number): DraftRow => ({
   key, sku: '', name: '', supplier: '', templateId: '', additionalName: '', useAlias: false,
   purchaseCost: '', salesPrice: '', shippingCost: '', otherCost: '', marketFeeRate: '',
-  vatType: 'taxable',
+  vatType: 'taxable', bundleShipping: false,
 });
 
-const isYes = (v: string) => ['y', 'yes', '1', 'o', 'true', 'ㅇ', '사용', '예'].includes(v.trim().toLowerCase());
+/**
+ * Y/N 열 해석. 목록에 없으면 전부 N 으로 본다 —
+ * 빈 칸도, 알 수 없는 값도 '아니오'가 되어야 실수로 켜지는 일이 없다.
+ */
+const isYes = (v: string) =>
+  ['y', 'yes', '1', 'o', 'true', 'ㅇ', '사용', '예', '가능', '함', 'ok'].includes(v.trim().toLowerCase());
 
 /** 붙여넣은 칸 하나를 해당 필드에 넣는다. 붙여넣기와 열 재지정 양쪽에서 같은 규칙을 쓴다. */
 const applyCell = (r: DraftRow, field: FieldKey, v: string, templateByName: Map<string, string>) => {
@@ -103,6 +111,7 @@ const applyCell = (r: DraftRow, field: FieldKey, v: string, templateByName: Map<
     case 'otherCost': r.otherCost = v; break;
     case 'marketFeeRate': r.marketFeeRate = v; break;
     case 'vatType': r.vatType = /면세|면|exempt/i.test(v) ? 'exempt' : 'taxable'; break;
+    case 'bundleShipping': r.bundleShipping = isYes(v); break;
   }
 };
 
@@ -112,7 +121,7 @@ const buildRows = (body: string[][], cols: FieldKey[], templateByName: Map<strin
     cols.forEach((field, i) => {
       const v = (cells[i] ?? '').trim();
       // 별칭사용 열은 값이 비어도 'N' 으로 해석해야 하므로 예외
-      if (field === 'ignore' || (!v && field !== 'useAlias')) return;
+      if (field === 'ignore' || (!v && field !== 'useAlias' && field !== 'bundleShipping')) return;
       applyCell(r, field, v, templateByName);
     });
     return r;
@@ -138,11 +147,12 @@ interface Props {
   existingProducts: Product[];
   useSupplierMaster: boolean;   // suppliers 테이블을 쓰는 스키마인지
   remainingSlots: number;       // 등급 한도까지 남은 제품 수
+  bundleSupported: boolean;     // products.bundle_shipping 컬럼이 있는지
   onSubmit: (payload: Omit<Product, 'id' | 'user_id'>[]) => Promise<void>;
 }
 
 export const BulkProductImport: React.FC<Props> = ({
-  open, onClose, templates, suppliers, existingProducts, useSupplierMaster, remainingSlots, onSubmit,
+  open, onClose, templates, suppliers, existingProducts, useSupplierMaster, remainingSlots, bundleSupported, onSubmit,
 }) => {
   const [raw, setRaw] = useState('');
   const [columns, setColumns] = useState<FieldKey[]>([]);
@@ -244,6 +254,7 @@ export const BulkProductImport: React.FC<Props> = ({
         templateNames: templates.map(t => t.name),
         supplierNames: suppliers.map(s => s.name),
         useSupplierMaster,
+
       });
       downloadBlob(blob, '제품_대량등록_양식.xlsx');
     } catch (err: any) {
@@ -303,6 +314,7 @@ export const BulkProductImport: React.FC<Props> = ({
         otherCost: toNumber(r.otherCost),
         marketFeeRate: toNumber(r.marketFeeRate),
         vatType: r.vatType,
+        bundleShipping: r.bundleShipping,
       });
     });
     if (payload.length === 0) return;
@@ -404,6 +416,12 @@ export const BulkProductImport: React.FC<Props> = ({
                 <option value="taxable">과세</option>
                 <option value="exempt">면세</option>
               </select>
+              <select onChange={e => e.target.value && applyAll({ bundleShipping: e.target.value === 'Y' })} value=""
+                className="rounded border-slate-300 text-[11px] py-1">
+                <option value="">묶음배송 일괄 지정</option>
+                <option value="Y">묶음배송 가능</option>
+                <option value="N">묶음배송 불가</option>
+              </select>
               <div className="flex-1" />
               <button onClick={reset} className="text-[11px] text-slate-400 hover:text-slate-600 underline">
                 처음부터 다시
@@ -441,6 +459,7 @@ export const BulkProductImport: React.FC<Props> = ({
                     <th className="px-2 py-2 min-w-[80px] text-right">기타비용</th>
                     <th className="px-2 py-2 min-w-[70px] text-right">수수료%</th>
                     <th className="px-2 py-2 min-w-[70px]">과세</th>
+                    <th className="px-2 py-2 w-16 text-center">묶음배송</th>
                     <th className="px-2 py-2 w-8"></th>
                   </tr>
                 </thead>
@@ -494,6 +513,11 @@ export const BulkProductImport: React.FC<Props> = ({
                             <option value="exempt">면세</option>
                           </select>
                         </td>
+                        <td className="px-1 text-center">
+                          <input type="checkbox" checked={r.bundleShipping}
+                            onChange={e => update(i, { bundleShipping: e.target.checked })}
+                            className="rounded border-slate-300" />
+                        </td>
                         <td className="px-2 text-center">
                           <button onClick={() => setRows(prev => prev.filter((_, idx) => idx !== i))}
                             className="text-slate-300 hover:text-red-500"><Trash2 size={13} /></button>
@@ -525,6 +549,9 @@ export const BulkProductImport: React.FC<Props> = ({
                 <span className="text-emerald-600 font-bold">정상 {validation.validCount}건</span>
                 {errCount > 0 && <span className="text-red-500 font-bold ml-2">수정필요 {errCount}건</span>}
                 <span className="text-slate-400 ml-2">· 등급 한도 잔여 {remainingSlots}개</span>
+                {!bundleSupported && (
+                  <span className="text-amber-600 ml-2">· 묶음배송은 마이그레이션 SQL 실행 전이라 아직 저장되지 않습니다</span>
+                )}
               </div>
               <button onClick={close} className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-700">취소</button>
               <button onClick={submit} disabled={validation.validCount === 0 || saving}

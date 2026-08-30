@@ -40,6 +40,8 @@ export interface Product {
   otherCost?: number;    // 기타비용 (포장비 등)
   marketFeeRate?: number; // 마켓 수수료율 (%)
   vatType?: VatType;      // 과세/면세 구분 (기본 과세)
+  /** 같은 수취인·주소로 가는 같은 발주처 제품끼리 송장 한 장으로 묶어도 되는지 */
+  bundleShipping?: boolean;
 }
 
 export interface SalesRecord {
@@ -103,6 +105,7 @@ export interface ColumnMapping {
   option: string; 
   quantity: string; // (New) 수량 열
   orderId: string; // (New) 주문번호 열
+  address: string; // (New) 주소 열 — 묶음배송 판단에 사용
 }
 
 export interface Tier {

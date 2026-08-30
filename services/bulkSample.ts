@@ -17,10 +17,12 @@ const DATA_SHEET = '제품';
 const MAX_ROW = 500;             // 드롭다운을 걸어둘 행 범위
 
 /** 제품 시트의 열 순서. 대량 등록 화면의 자동 인식 순서와 맞춰둔다. */
-const COLUMNS = [
+const BASE_COLUMNS = [
   'SKU', '제품명', '별칭', '별칭사용', '발주처', '송장양식',
   '매입가', '판매가', '배송비', '기타비용', '수수료율', '과세구분',
-] as const;
+];
+/** 묶음배송은 맨 뒤 열 (M열) */
+const BUNDLE_COLUMN = '묶음배송';
 
 const escapeXml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -82,20 +84,28 @@ export interface SampleOptions {
   supplierNames: string[];
   /** 발주처 마스터를 안 쓰는 스키마면 발주처 드롭다운을 걸지 않는다 */
   useSupplierMaster: boolean;
+  /**
+   * 묶음배송 열 포함 여부. 기본 true.
+   * DB 에 컬럼이 없어도 엑셀 양식에는 넣어둔다 — 미리 채워두면 컬럼을 추가한 뒤
+   * 그대로 쓸 수 있고, 열이 없다고 매번 양식을 다시 받게 만들 이유가 없다.
+   */
+  includeBundle?: boolean;
 }
 
 export const buildBulkSampleWorkbook = async (opts: SampleOptions): Promise<Blob> => {
-  const { templateNames, supplierNames, useSupplierMaster } = opts;
+  const { templateNames, supplierNames, useSupplierMaster, includeBundle = true } = opts;
+  const COLUMNS = includeBundle ? [...BASE_COLUMNS, BUNDLE_COLUMN] : BASE_COLUMNS;
 
   // ── 1) 제품 시트: 제목 줄 + 예시 두 줄 ──────────────────────────────────
-  const example = [
+  const example: any[][] = [
     ['A-001', '양파 10kg', '햇양파 10kg(대)', 'Y',
      supplierNames[0] ?? '', templateNames[0] ?? '', 12000, 19000, 3000, 0, 10, '과세'],
     ['A-002', '감자 5kg', '', 'N',
      supplierNames[0] ?? '', templateNames[0] ?? '', 8000, 13000, 3000, 0, 10, '면세'],
   ];
+  if (includeBundle) { example[0].push('Y'); example[1].push('N'); }
   const dataWs = XLSX.utils.aoa_to_sheet([[...COLUMNS], ...example]);
-  dataWs['!cols'] = COLUMNS.map(c => ({ wch: c === '제품명' || c === '별칭' ? 20 : 12 }));
+  dataWs['!cols'] = COLUMNS.map((c: string) => ({ wch: c === '제품명' || c === '별칭' ? 20 : 12 }));
 
   // ── 2) 선택목록 시트 ────────────────────────────────────────────────────
   const vatOptions = ['과세', '면세'];
@@ -128,6 +138,8 @@ export const buildBulkSampleWorkbook = async (opts: SampleOptions): Promise<Blob
     validations.push({ sqref: `E2:E${MAX_ROW}`, source: rangeOf('B', supplierNames.length) });
   validations.push({ sqref: `L2:L${MAX_ROW}`, source: rangeOf('C', vatOptions.length) });
   validations.push({ sqref: `D2:D${MAX_ROW}`, source: rangeOf('D', yesNo.length) });
+  // 묶음배송(M열)도 Y/N 목록을 쓴다
+  if (includeBundle) validations.push({ sqref: `M2:M${MAX_ROW}`, source: rangeOf('D', yesNo.length) });
 
   // ── 4) 생성 후 XML 에 주입 ──────────────────────────────────────────────
   const raw = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });

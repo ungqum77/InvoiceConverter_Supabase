@@ -165,3 +165,9 @@ create policy "activity_logs_insert_own" on public.activity_logs
 --     header_aliases = [["오더번호"], ["받는분","수령인"]]
 alter table public.invoice_templates
   add column if not exists header_aliases jsonb;
+
+-- ── 묶음배송 가능 표시 ─────────────────────────────────────────────────────
+-- 같은 수취인·주소로 가는 같은 발주처 제품끼리 송장 한 장으로 묶을지 여부.
+-- 기존 동작이 바뀌지 않도록 기본값은 false(묶지 않음).
+alter table public.products
+  add column if not exists bundle_shipping boolean not null default false;

@@ -84,6 +84,7 @@ export const ProductManagement: React.FC = () => {
   const [otherCost, setOtherCost] = useState(0);
   const [marketFeeRate, setMarketFeeRate] = useState(0);
   const [vatType, setVatType] = useState<VatType>('taxable');
+  const [bundleShipping, setBundleShipping] = useState(false);
 
   // Supplier modal
   const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
@@ -165,6 +166,7 @@ export const ProductManagement: React.FC = () => {
       setOtherCost(productToEdit.otherCost || 0);
       setMarketFeeRate(productToEdit.marketFeeRate || 0);
       setVatType(productToEdit.vatType || 'taxable');
+      setBundleShipping(productToEdit.bundleShipping === true);
     } else {
       setEditingProductId(null);
       setNewSku('');
@@ -181,6 +183,7 @@ export const ProductManagement: React.FC = () => {
       setOtherCost(0);
       setMarketFeeRate(0);
       setVatType('taxable');
+      setBundleShipping(false);
     }
     setIsProductModalOpen(true);
   };
@@ -220,7 +223,8 @@ export const ProductManagement: React.FC = () => {
         shippingCost,
         otherCost,
         marketFeeRate,
-        vatType
+        vatType,
+        bundleShipping
       };
       if (editingProductId) await updateProduct(editingProductId, payload);
       else await createProduct(payload);
@@ -740,6 +744,20 @@ export const ProductManagement: React.FC = () => {
                   <p className="text-[10px] text-amber-600 mt-1">* 마이그레이션 SQL 실행 전이라 과세 구분은 아직 저장되지 않습니다.</p>
                 )}
               </div>
+              <div className="md:col-span-2">
+                <label className="flex items-start gap-2.5 cursor-pointer bg-slate-50 border border-slate-200 rounded-lg p-3">
+                  <input type="checkbox" checked={bundleShipping} onChange={e => setBundleShipping(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300" />
+                  <span className="text-[11px] leading-relaxed text-slate-600">
+                    <b className="text-slate-800">묶음배송 가능</b><br />
+                    같은 발주처의 다른 묶음배송 가능 제품과 <b>수취인·주소가 같으면</b> 송장 한 장으로 합칩니다.
+                    냉동·생선처럼 따로 보내야 하는 제품은 꺼두세요.
+                  </span>
+                </label>
+                {!schema.productBundle && (
+                  <p className="text-[10px] text-amber-600 mt-1">* 마이그레이션 SQL 실행 전이라 묶음배송 설정은 아직 저장되지 않습니다.</p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">택배비용</label>
@@ -801,6 +819,7 @@ export const ProductManagement: React.FC = () => {
         suppliers={suppliers}
         existingProducts={products}
         useSupplierMaster={schema.suppliers}
+        bundleSupported={schema.productBundle}
         remainingSlots={Math.max(0, currentTier.max_products - products.length)}
         onSubmit={handleBulkSubmit}
       />

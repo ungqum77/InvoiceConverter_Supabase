@@ -22,6 +22,7 @@ const mapProductFromDB = (data: any): Product => ({
   otherCost: data.other_cost || 0,
   marketFeeRate: data.market_fee_rate || 0,
   vatType: data.vat_type === 'exempt' ? 'exempt' : 'taxable',
+  bundleShipping: data.bundle_shipping === true,
 });
 
 const mapSupplierFromDB = (data: any): Supplier => ({
@@ -50,6 +51,7 @@ export interface SchemaSupport {
   productVat: boolean;  // products.vat_type
   salesVat: boolean;    // sales_records.total_vat_amount
   templateAliases: boolean; // invoice_templates.header_aliases
+  productBundle: boolean;   // products.bundle_shipping
 }
 
 let schemaCache: SchemaSupport | null = null;
@@ -57,7 +59,7 @@ let schemaCache: SchemaSupport | null = null;
 export const getSchemaSupport = async (force = false): Promise<SchemaSupport> => {
   if (schemaCache && !force) return schemaCache;
   if (!supabase) {
-    schemaCache = { suppliers: false, productVat: false, salesVat: false, templateAliases: false };
+    schemaCache = { suppliers: false, productVat: false, salesVat: false, templateAliases: false, productBundle: false };
     return schemaCache;
   }
   const probe = async (table: string, columns: string) => {
@@ -66,13 +68,14 @@ export const getSchemaSupport = async (force = false): Promise<SchemaSupport> =>
       return !error;
     } catch (e) { return false; }
   };
-  const [suppliers, productVat, salesVat, templateAliases] = await Promise.all([
+  const [suppliers, productVat, salesVat, templateAliases, productBundle] = await Promise.all([
     (async () => (await probe('suppliers', 'id')) && (await probe('products', 'supplier_id')))(),
     probe('products', 'vat_type'),
     probe('sales_records', 'total_vat_amount'),
     probe('invoice_templates', 'header_aliases'),
+    probe('products', 'bundle_shipping'),
   ]);
-  schemaCache = { suppliers, productVat, salesVat, templateAliases };
+  schemaCache = { suppliers, productVat, salesVat, templateAliases, productBundle };
   return schemaCache;
 };
 
@@ -366,6 +369,7 @@ const productPayload = (p: Partial<Product>, schema: SchemaSupport) => {
   };
   if (schema.suppliers) payload.supplier_id = p.supplierId || null;
   if (schema.productVat) payload.vat_type = p.vatType || 'taxable';
+  if (schema.productBundle) payload.bundle_shipping = p.bundleShipping === true;
   return payload;
 };
 
@@ -405,6 +409,7 @@ export const updateProduct = async (id: string, product: Partial<Product>): Prom
     const schema = await getSchemaSupport();
     if (schema.suppliers && product.supplierId !== undefined) updates.supplier_id = product.supplierId || null;
     if (schema.productVat && product.vatType !== undefined) updates.vat_type = product.vatType;
+    if (schema.productBundle && product.bundleShipping !== undefined) updates.bundle_shipping = product.bundleShipping;
     const { data, error } = await supabase.from('products').update(updates).eq('id', id).select().single();
     if (error) throw error;
     return mapProductFromDB(data);
