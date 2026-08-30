@@ -7,6 +7,26 @@ import { Lock, Mail, Loader2, AlertTriangle, UserX, AlertCircle, Copy, Check, Ex
 import { useAuth } from '../contexts/AuthContext';
 import { trackEvent } from '../services/dbService';
 
+/**
+ * Supabase 가 돌려주는 인증 오류는 영문이라 그대로 띄우면 사용자가 알 수 없다.
+ * ("Email not confirmed" 같은 것) 자주 나오는 것만 한글로 바꾼다.
+ */
+const AUTH_ERROR_KO: { match: RegExp; text: string }[] = [
+  { match: /email not confirmed/i,        text: '이메일 인증이 아직 안 됐습니다. 메일함(스팸함 포함)의 인증 링크를 눌러주세요.' },
+  { match: /invalid login credentials/i,  text: '이메일 또는 비밀번호가 맞지 않습니다.' },
+  { match: /user already registered|already registered/i, text: '이미 가입된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용하세요.' },
+  { match: /password should be at least/i, text: '비밀번호가 너무 짧습니다. 6자 이상으로 정해주세요.' },
+  { match: /unable to validate email|invalid email/i, text: '이메일 주소 형식이 올바르지 않습니다.' },
+  { match: /email rate limit|over_email_send_rate_limit|too many requests/i,
+    text: '메일 발송 한도를 넘었습니다. 잠시 뒤 다시 시도해주세요.' },
+  { match: /for security purposes|only request this after/i, text: '잠시 뒤에 다시 시도해주세요.' },
+];
+
+const toKoreanAuthError = (raw: string): string => {
+  const hit = AUTH_ERROR_KO.find(e => e.match.test(raw));
+  return hit ? hit.text : (raw || '오류가 발생했습니다.');
+};
+
 export const Auth: React.FC = () => {
   const { user, loading: authLoading, isDeletedAccount, signOut } = useAuth();
   const navigate = useNavigate();
@@ -20,6 +40,9 @@ export const Auth: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [isProcessingHash, setIsProcessingHash] = useState(false);
   const [showConfigHelp, setShowConfigHelp] = useState(false);
+  // 미인증 계정이면 메시지 아래에 '인증 메일 다시 보내기' 를 띄운다
+  const [needsConfirm, setNeedsConfirm] = useState(false);
+  const [resending, setResending] = useState(false);
 
   const hasRedirected = useRef(false);
 
@@ -146,9 +169,31 @@ export const Auth: React.FC = () => {
       }
     } catch (error: any) {
       console.error("Auth Error:", error);
-      setMessage({ type: 'error', text: error.message || '오류가 발생했습니다.' });
+      const raw = String(error.message || '');
+      setNeedsConfirm(/email not confirmed/i.test(raw));
+      setMessage({ type: 'error', text: toKoreanAuthError(raw) });
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 인증 메일 재발송. Supabase 기본 SMTP 는 발송 한도가 낮아 실패할 수 있다.
+  const resendConfirmation = async () => {
+    if (!supabase || !email) return;
+    setResending(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: currentOrigin },
+      });
+      if (error) throw error;
+      setNeedsConfirm(false);
+      setMessage({ type: 'success', text: `${email} 로 인증 메일을 다시 보냈습니다. 스팸함도 확인해주세요.` });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: toKoreanAuthError(String(err.message || '')) });
+    } finally {
+      setResending(false);
     }
   };
 
@@ -202,10 +247,16 @@ export const Auth: React.FC = () => {
 
         {message && (
           <div className={`p-4 rounded-lg text-sm mb-6 border ${message.type === 'error' ? 'bg-red-50 text-red-700 border-red-100' : 'bg-green-50 text-green-700 border-green-100'}`}>
-             <div className="flex items-center gap-2 text-xs leading-relaxed">
-                {message.type === 'error' ? <AlertTriangle size={16}/> : <CheckCircle2 size={16}/>}
-                {message.text}
+             <div className="flex items-start gap-2 text-xs leading-relaxed">
+                <span className="shrink-0 mt-0.5">{message.type === 'error' ? <AlertTriangle size={16}/> : <CheckCircle2 size={16}/>}</span>
+                <span>{message.text}</span>
              </div>
+             {needsConfirm && (
+                <button type="button" onClick={resendConfirmation} disabled={resending || !email}
+                  className="mt-3 w-full py-2 bg-white border border-red-200 text-red-700 rounded-lg text-xs font-bold hover:bg-red-100 transition-colors disabled:opacity-50">
+                  {resending ? '보내는 중…' : '인증 메일 다시 보내기'}
+                </button>
+             )}
           </div>
         )}
 

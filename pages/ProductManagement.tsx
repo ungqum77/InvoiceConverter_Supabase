@@ -9,6 +9,7 @@ import { supabase } from '../services/supabase';
 import { Button } from '../components/Button';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { BulkProductImport } from '../components/BulkProductImport';
 
 const YouTubeEmbed = ({ url, title }: { url: string; title: string }) => {
     if (!url) return null;
@@ -90,8 +91,6 @@ export const ProductManagement: React.FC = () => {
   const [supplierForm, setSupplierForm] = useState<Omit<Supplier, 'id' | 'user_id'>>(blankSupplier);
 
   const templateFileRef = useRef<HTMLInputElement>(null);
-  const bulkFileRef = useRef<HTMLInputElement>(null);
-  const [isBulkLoading, setIsBulkLoading] = useState(false);
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -342,131 +341,11 @@ export const ProductManagement: React.FC = () => {
     e.target.value = '';
   };
 
-  // Bulk Upload updated to include financials and check for SKU duplicates
-  const handleBulkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setIsBulkLoading(true);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const result = evt.target?.result;
-        if (typeof result !== 'string') throw new Error("파일 읽기 오류");
-        const wb = XLSX.read(result, { type: 'binary' });
-        const firstSheetName = wb.SheetNames[0];
-        if (!firstSheetName) throw new Error("시트 없음");
-        
-        const sheet = wb.Sheets[String(firstSheetName)];
-        const data = XLSX.utils.sheet_to_json(sheet as any) as any[];
-        
-        const templateMap = new Map<string, string>(templates.map(t => [t.name.trim(), t.id]));
-        const supplierByName = new Map<string, Supplier>(suppliers.map(s => [s.name.trim(), s]));
-        const unknownSuppliers = new Set<string>();
-        const existingSkus = new Set(products.map(p => p.sku));
-        const newSkusInFile = new Set<string>();
-        
-        const payload: Omit<Product, 'id' | 'user_id'>[] = [];
-        const errors: string[] = []; // For critical errors (missing template etc)
-        const duplicates: string[] = []; // For duplicates
-
-        data.forEach((row, idx) => {
-          const rowNum = idx + 2;
-          const sku = String(row['SKU(필수)'] || row['SKU'] || '').trim();
-          const name = String(row['제품명(필수)'] || row['제품명'] || '').trim();
-          const supplier = String(row['발주처(필수)'] || row['발주처'] || '').trim();
-          const tplName = String(row['적용양식명(필수)'] || row['적용양식명'] || '').trim();
-          
-          // 빈 행 스킵
-          if (!sku && !name && !supplier && !tplName) return;
-
-          // 필수값 검증 및 에러 메시지 생성
-          if (!sku) { errors.push(`[${rowNum}행] ${name || '제품명 없음'}: SKU 누락`); return; }
-          if (!name) { errors.push(`[${rowNum}행] SKU(${sku}): 제품명 누락`); return; }
-          if (!supplier) { errors.push(`[${rowNum}행] ${name}: 발주처 누락`); return; }
-          if (!tplName) { errors.push(`[${rowNum}행] ${name}: 적용양식명 누락`); return; }
-
-          const tplId = templateMap.get(tplName);
-          if (!tplId) {
-              errors.push(`[${rowNum}행] ${name}: 등록되지 않은 양식명 '${tplName}'`);
-              return;
-          }
-
-          // 중복 체크
-          if (existingSkus.has(sku)) {
-              duplicates.push(`${name} (${sku}): 이미 등록됨`);
-              return;
-          }
-          if (newSkusInFile.has(sku)) {
-              duplicates.push(`${name} (${sku}): 파일 내 중복`);
-              return;
-          }
-
-          // 발주처 마스터를 쓰는 경우, 이름이 목록에 있으면 연결한다.
-          const matchedSupplier = supplierByName.get(supplier);
-          if (schema.suppliers && !matchedSupplier) unknownSuppliers.add(supplier);
-
-          const vatRaw = String(row['과세구분'] || '').trim();
-          const vat: VatType = ['면세', 'EXEMPT', '면'].includes(vatRaw.toUpperCase()) ? 'exempt' : 'taxable';
-
-          newSkusInFile.add(sku);
-          payload.push({
-              sku, name,
-              supplierName: matchedSupplier?.name || supplier,
-              supplierId: matchedSupplier?.id,
-              templateId: tplId,
-              additionalName: String(row['대체제품명'] || '').trim() || undefined,
-              useAdditionalName: ['Y', 'YES', '1'].includes(String(row['대체제품명사용'] || '').trim().toUpperCase()),
-              salesPrice: Number(row['판매가'] || 0),
-              purchaseCost: Number(row['매입가'] || 0),
-              shippingCost: Number(row['배송비'] || 0),
-              otherCost: Number(row['기타비용'] || 0),
-              marketFeeRate: Number(row['수수료율'] || 0),
-              vatType: vat
-          });
-        });
-
-        let confirmMsg = '';
-
-        if (unknownSuppliers.size > 0) {
-            confirmMsg += `ℹ️ [발주처 목록에 없는 이름 ${unknownSuppliers.size}건]\n` +
-              `${Array.from(unknownSuppliers).slice(0, 3).join(', ')}${unknownSuppliers.size > 3 ? ' 외' : ''}\n` +
-              `등록은 진행되지만 발주처 탭에서 '기존 제품에서 가져오기'로 연결해주세요.\n\n`;
-        }
-
-        if (errors.length > 0) {
-            confirmMsg += `⛔ [입력 오류 ${errors.length}건] (등록 제외)\n${errors.slice(0,3).join('\n')}${errors.length>3 ? `\n...외 ${errors.length-3}건` : ''}\n\n`;
-        }
-        if (duplicates.length > 0) {
-            confirmMsg += `⚠️ [중복 데이터 ${duplicates.length}건] (등록 제외)\n${duplicates.slice(0,3).join('\n')}${duplicates.length>3 ? `\n...외 ${duplicates.length-3}건` : ''}\n\n`;
-        }
-
-        if (payload.length === 0) {
-            alert(confirmMsg + "등록 가능한 유효한 데이터가 없습니다.");
-        } else {
-            confirmMsg += `✅ 유효한 데이터 ${payload.length}건을 등록하시겠습니까?`;
-            if (confirm(confirmMsg)) {
-                await createProductsBulk(payload);
-                alert(`${payload.length}건 등록 완료!`);
-                loadData();
-                setIsBulkModalOpen(false);
-            }
-        }
-      } catch (err: any) { alert("오류: " + err.message); } finally { setIsBulkLoading(false); }
-    };
-    reader.readAsBinaryString(file);
-    e.target.value = ''; // Reset input to allow re-uploading same file if failed
-  };
-
-  const downloadSampleExcel = () => {
-    const data = [{ 
-        "SKU(필수)": "PROD-001", "제품명(필수)": "샘플상품", "발주처(필수)": "공급사A", "적용양식명(필수)": templates[0]?.name || "기본양식",
-        "대체제품명": "", "대체제품명사용": "N", "과세구분": "과세",
-        "판매가": 10000, "매입가": 5000, "배송비": 3000, "기타비용": 500, "수수료율": 10
-    }];
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(data);
-    XLSX.utils.book_append_sheet(wb, ws, "Sample");
-    XLSX.writeFile(wb, "대량등록_양식_CRM.xlsx");
+  // 대량 등록 화면에서 검증까지 끝난 데이터만 넘어온다.
+  const handleBulkSubmit = async (payload: Omit<Product, 'id' | 'user_id'>[]) => {
+    await createProductsBulk(payload);
+    await loadData();
+    alert(`${payload.length}건 등록 완료!`);
   };
 
   const handleBulkModalOpen = () => {
@@ -919,27 +798,16 @@ export const ProductManagement: React.FC = () => {
         </div>
       )}
 
-      {isBulkModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in">
-             <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
-                <h3 className="font-bold flex items-center gap-2 text-slate-800"><FileUp size={18} /> 제품 대량 등록</h3>
-                <button onClick={() => setIsBulkModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-            </div>
-            <div className="p-6 space-y-6">
-                <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg flex flex-col gap-3">
-                    <button onClick={downloadSampleExcel} className="flex items-center justify-center gap-2 py-2.5 px-3 bg-blue-600 text-white rounded-lg text-[11px] font-bold hover:bg-blue-700 transition-colors w-full shadow-sm"><Download size={14}/> 샘플 엑셀 다운로드 (CRM 포함)</button>
-                </div>
-                <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-xl p-10 hover:border-primary transition-colors bg-slate-50 cursor-pointer group" onClick={() => bulkFileRef.current?.click()}>
-                    <FileSpreadsheet size={32} className="text-slate-300 group-hover:text-primary transition-colors mb-2" />
-                    <p className="text-sm font-bold text-slate-700">엑셀 파일 업로드</p>
-                    <input type="file" accept=".xlsx, .xls" ref={bulkFileRef} className="hidden" onChange={handleBulkUpload}/>
-                </div>
-                {isBulkLoading && <div className="text-center text-primary font-bold text-sm">처리 중...</div>}
-            </div>
-          </div>
-        </div>
-      )}
+      <BulkProductImport
+        open={isBulkModalOpen}
+        onClose={() => setIsBulkModalOpen(false)}
+        templates={templates}
+        suppliers={suppliers}
+        existingProducts={products}
+        useSupplierMaster={schema.suppliers}
+        remainingSlots={Math.max(0, currentTier.max_products - products.length)}
+        onSubmit={handleBulkSubmit}
+      />
     </div>
   );
 };
