@@ -4,12 +4,55 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube, DollarSign, Calendar, FolderInput, HardDrive, FolderTree, ChevronRight, Check, FolderOpen } from 'lucide-react';
 import { Button } from '../components/Button';
-import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords, deleteOldestSalesRecords, SalesSaveResult } from '../services/dbService';
-import { InvoiceRow, MatchedOrder, Product, ColumnMapping, SalesRecord } from '../types';
+import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords, deleteOldestSalesRecords, SalesSaveResult, fetchSuppliers } from '../services/dbService';
+import { InvoiceRow, MatchedOrder, Product, ColumnMapping, SalesRecord, Supplier } from '../types';
+import { calcProductProfit, AmountBreakdown, emptyBreakdown } from '../services/calc';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
 const PRODUCT_NAME_HEADERS = ['상품명', '품목명', '내용물', '물품명', '상품이름', '제품명', '제품', 'Product Name', 'Item Name', 'Product', 'Item'];
+
+/** 발주처별 정산 집계 */
+interface SupplierSettlement extends AmountBreakdown {
+  itemCount: number;
+  quantity: number;
+  paymentTerms: string;
+}
+
+const emptySettlement = (paymentTerms = ''): SupplierSettlement =>
+  ({ ...emptyBreakdown(), itemCount: 0, quantity: 0, paymentTerms });
+
+const SUMMARY_COLUMNS = ['발주처', '품목수', '총수량', '공급가액', '부가세', '지급액(부가세포함)', '결제조건'] as const;
+
+type SettlementMap = Record<string, SupplierSettlement>;
+const settlementEntries = (m: SettlementMap): [string, SupplierSettlement][] => Object.entries(m);
+const settlementTotals = (m: SettlementMap): SupplierSettlement =>
+  Object.keys(m).reduce<SupplierSettlement>((acc, k) => ({
+    supply: acc.supply + m[k].supply,
+    vat: acc.vat + m[k].vat,
+    total: acc.total + m[k].total,
+    quantity: acc.quantity + m[k].quantity,
+    itemCount: acc.itemCount + m[k].itemCount,
+    paymentTerms: '',
+  }), emptySettlement());
+
+/** 정산요약 시트 행 (엑셀 저장 및 기존 파일 병합에 공통으로 사용) */
+const summaryRows = (summary: Record<string, SupplierSettlement>) =>
+  Object.entries(summary).map(([name, s]) => ({
+    '발주처': name,
+    '품목수': s.itemCount,
+    '총수량': s.quantity,
+    '공급가액': s.supply,
+    '부가세': s.vat,
+    '지급액(부가세포함)': s.total,
+    '결제조건': s.paymentTerms || '',
+  }));
+
+const trimAll = (arr: any[]) => arr.map(h => String(h ?? '').trim());
+const sameHeaders = (a: any[], b: any[]) => {
+  const x = trimAll(a), y = trimAll(b);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+};
 
 const YouTubeEmbed = ({ url, title }: { url: string; title: string }) => {
     if (!url) return null;
@@ -49,7 +92,8 @@ export const InvoiceConverter: React.FC = () => {
     silver_subscription_url: '', gold_subscription_url: '', youtube_tutorial_template: '', youtube_tutorial_product: '', youtube_tutorial_convert: '',
     price_silver_original: '', price_silver_sale: '', price_gold_original: '', price_gold_sale: '',
   });
-  const [financialSummary, setFinancialSummary] = useState<Record<string, number>>({});
+  const [financialSummary, setFinancialSummary] = useState<Record<string, SupplierSettlement>>({});
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [saveToCrm, setSaveToCrm] = useState(true);
 
   // Folder Save Success Modal State
@@ -60,11 +104,29 @@ export const InvoiceConverter: React.FC = () => {
   useEffect(() => { 
       if(user) {
           fetchAppSettings().then(setAppSettings);
-          fetchProducts().then(setDbProducts); 
+          fetchProducts().then(setDbProducts);
+          fetchSuppliers().then(setSuppliers).catch(() => setSuppliers([]));
       }
   }, [user]);
 
   const normalizeSku = (val: any) => String(val || '').replace(/[\s\u200B-\u200D\uFEFF]/g, '').toLowerCase();
+
+  /** \uC81C\uD488\uC774 \uC18D\uD55C \uBC1C\uC8FC\uCC98\uC758 \uC124\uC815(\uBD80\uAC00\uC138 \uD3EC\uD568\uAC00 \uC5EC\uBD80, \uACB0\uC81C\uC870\uAC74)\uC744 \uCC3E\uB294\uB2E4. */
+  const supplierOf = (product?: Product): Supplier | undefined => {
+    if (!product) return undefined;
+    if (product.supplierId) {
+      const byId = suppliers.find(s => s.id === product.supplierId);
+      if (byId) return byId;
+    }
+    const name = String(product.supplierName || '').trim();
+    return suppliers.find(s => s.name.trim() === name);
+  };
+
+  /** \uD55C \uC8FC\uBB38 \uC904\uC758 \uB9E4\uC785 \uAE08\uC561\uC744 \uACF5\uAE09\uAC00\uC561/\uBD80\uAC00\uC138/\uD569\uACC4\uB85C \uACC4\uC0B0 */
+  const purchaseOf = (order: MatchedOrder) => {
+    const sup = supplierOf(order.product);
+    return calcProductProfit(order.product!, order.quantity, sup?.vatIncluded ?? true);
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -134,8 +196,15 @@ export const InvoiceConverter: React.FC = () => {
     setIsProcessing(true);
     try {
         const products = dbProducts.length > 0 ? dbProducts : await fetchProducts();
+        const supplierList = suppliers.length > 0 ? suppliers : await fetchSuppliers().catch(() => [] as Supplier[]);
+        if (supplierList !== suppliers) setSuppliers(supplierList);
+
+        const findSupplier = (p: Product) =>
+            (p.supplierId ? supplierList.find(s => s.id === p.supplierId) : undefined)
+            || supplierList.find(s => s.name.trim() === String(p.supplierName || '').trim());
+
         const productMap = new Map<string, Product>(products.map(p => [normalizeSku(p.sku), p]));
-        const summary: Record<string, number> = {};
+        const summary: Record<string, SupplierSettlement> = {};
         const results: MatchedOrder[] = rawRows.map((row, idx) => {
             const cellValue = normalizeSku(row[mapping.sku]);
             const matchedProduct = productMap.get(cellValue);
@@ -145,9 +214,15 @@ export const InvoiceConverter: React.FC = () => {
                 if (!isNaN(q) && q > 0) qty = q;
             }
             if (matchedProduct) {
-                const sup = matchedProduct.supplierName;
-                const cost = (matchedProduct.purchaseCost || 0) * qty;
-                summary[sup] = (summary[sup] || 0) + cost;
+                const supplier = findSupplier(matchedProduct);
+                const name = matchedProduct.supplierName;
+                const { purchase } = calcProductProfit(matchedProduct, qty, supplier?.vatIncluded ?? true);
+                const acc = summary[name] || (summary[name] = emptySettlement(supplier?.paymentTerms || ''));
+                acc.supply += purchase.supply;
+                acc.vat += purchase.vat;
+                acc.total += purchase.total;
+                acc.quantity += qty;
+                acc.itemCount += 1;
             }
             return { id: `ROW-${idx}`, originalData: row, product: matchedProduct, status: matchedProduct ? 'matched' : 'unmatched', templateId: matchedProduct?.templateId, quantity: qty };
         });
@@ -176,18 +251,24 @@ export const InvoiceConverter: React.FC = () => {
         if (order.status === 'matched' && product && product.templateId) {
            if (saveToCrm) {
                const qty = order.quantity;
-               const salesAmt = (product.salesPrice || 0) * qty;
-               const purchAmt = (product.purchaseCost || 0) * qty;
-               const shipCost = (product.shippingCost || 0) * qty;
-               const fee = Math.round(salesAmt * ((product.marketFeeRate || 0) / 100));
-               const profit = salesAmt - purchAmt - shipCost - (product.otherCost || 0) * qty - fee;
+               // 금액 계산은 services/calc.ts 한 곳에서만 수행한다.
+               const calc = purchaseOf(order);
                const { name: resolvedName } = getResolvedProductName(order);
                const orderIdValue = mapping.orderId ? String(order.originalData[mapping.orderId] || '').trim() : undefined;
 
                salesRecordsToSave.push({
-                   user_id: user!.id, product_id: product.id, product_name: resolvedName, product_sku: product.sku, supplier_name: product.supplierName,
-                   order_id: orderIdValue, quantity: qty, unit_sales_price: product.salesPrice || 0, unit_purchase_cost: product.purchaseCost || 0,
-                   total_sales_amount: salesAmt, total_purchase_amount: purchAmt, total_shipping_cost: shipCost, total_market_fee: fee, net_profit: profit, order_date: new Date().toISOString()
+                   user_id: user!.id, product_id: product.id, product_name: resolvedName, product_sku: product.sku,
+                   supplier_name: product.supplierName, supplier_id: product.supplierId,
+                   order_id: orderIdValue, quantity: qty,
+                   unit_sales_price: product.salesPrice || 0, unit_purchase_cost: product.purchaseCost || 0,
+                   total_sales_amount: calc.salesAmount,
+                   total_purchase_amount: calc.purchase.total,
+                   total_supply_amount: calc.purchase.supply,
+                   total_vat_amount: calc.purchase.vat,
+                   total_shipping_cost: calc.shippingAmount,
+                   total_market_fee: calc.marketFee,
+                   net_profit: calc.netProfit,
+                   order_date: new Date().toISOString()
                });
            }
            const safeName = product.supplierName.replace(/[\\/:*?"<>|]/g, '-');
@@ -251,7 +332,7 @@ export const InvoiceConverter: React.FC = () => {
       });
 
       const summaryWb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(summaryWb, XLSX.utils.json_to_sheet(Object.entries(financialSummary).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }))), "정산요약");
+      XLSX.utils.book_append_sheet(summaryWb, XLSX.utils.json_to_sheet(summaryRows(financialSummary)), "정산요약");
       zip.file(`${datePath}/00_정산요약_${now.getDate()}.xlsx`, XLSX.write(summaryWb, { bookType: 'xlsx', type: 'array' }));
 
       await saveCrmDataOnly(salesRecordsToSave);
@@ -271,7 +352,9 @@ export const InvoiceConverter: React.FC = () => {
           const yearDir = await rootHandle.getDirectoryHandle(String(now.getFullYear()), { create: true });
           const monthDir = await yearDir.getDirectoryHandle(String(now.getMonth() + 1).padStart(2, '0'), { create: true });
           const targetDir = await monthDir.getDirectoryHandle(`${String(now.getDate()).padStart(2, '0')}_${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][now.getDay()]}`, { create: true });
-          const incrementalCosts: Record<string, number> = {};
+          const incremental: Record<string, SupplierSettlement> = {};
+          const renamedFiles: string[] = [];
+          const stamp = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
 
           const readExcelData = async (dirHandle: any, fileName: string) => {
               try {
@@ -282,14 +365,16 @@ export const InvoiceConverter: React.FC = () => {
               } catch (e) { return null; }
           };
 
-          for (const [key, group] of fileGroups) {
+          for (const [, group] of fileGroups) {
               const tpl = templateMap.get(group.templateId);
               if (!tpl) continue;
               const supplierDir = await targetDir.getDirectoryHandle(group.supplier, { create: true });
-              const fileName = `${group.fileName}.xlsx`;
+              let fileName = `${group.fileName}.xlsx`;
               const finalHeaders = (tpl.outputHeaders && tpl.outputHeaders.length > 0) ? tpl.outputHeaders : tpl.headers;
               const existingData = await readExcelData(supplierDir, fileName);
 
+              // rowData 는 tpl.headers 순서로 만들어지고, 파일에 기록되는 헤더 줄은 finalHeaders 다.
+              // 두 배열은 같은 길이의 평행 배열이므로 i번째 값의 '출력 컬럼명'은 finalHeaders[i] 다.
               const newRows = group.orders.map(o => {
                   const rowData: any[] = [];
                   const { name: pName } = getResolvedProductName(o);
@@ -305,30 +390,67 @@ export const InvoiceConverter: React.FC = () => {
                   return { rowData, order: o };
               });
 
-              let finalAoA: any[][] = [];
-              let addedCost = 0;
+              // [수정] 예전에는 기존 파일의 컬럼 인덱스를 새 행에 그대로 적용해서
+              // 양식이 바뀌면 엉뚱한 컬럼끼리 비교되었다. 이제는 '컬럼 이름'으로만 비교한다.
+              const tplTrimmed = trimAll(tpl.headers);
+              const outputNameFor = (inputHeader?: string) => {
+                  if (!inputHeader) return '';
+                  const i = tplTrimmed.indexOf(String(inputHeader).trim());
+                  return i >= 0 ? String(finalHeaders[i] ?? '').trim() : '';
+              };
+              const productOutName = (() => {
+                  const i = tpl.headers.findIndex(h => (mapping.productName && h === mapping.productName) || PRODUCT_NAME_HEADERS.some(ph => String(h).includes(ph)));
+                  return i >= 0 ? String(finalHeaders[i] ?? '').trim() : '';
+              })();
 
-              if (existingData && existingData.length > 0) {
-                  const exHeaders = existingData[0] as string[];
-                  const getIdx = (colName: string) => exHeaders.findIndex(h => String(h).trim() === String(colName).trim());
-                  const idIdx = mapping.orderId ? getIdx(mapping.orderId) : -1;
-                  const ordIdx = mapping.orderer ? getIdx(mapping.orderer) : -1;
-                  const rcvIdx = mapping.receiver ? getIdx(mapping.receiver) : -1;
-                  const prdIdx = exHeaders.findIndex(h => (mapping.productName && h === mapping.productName) || PRODUCT_NAME_HEADERS.some(ph => h.includes(ph)));
+              const identityCols = [outputNameFor(mapping.orderId), outputNameFor(mapping.orderer), outputNameFor(mapping.receiver)].filter(Boolean);
+              // 주문을 구분할 컬럼이 양식에 하나도 없으면 제품명만으로 비교하게 되어
+              // 같은 상품을 주문한 다른 고객이 중복으로 잘못 걸러진다. 이때는 행 전체를 키로 쓴다.
+              const keyCols = identityCols.length > 0
+                  ? [...identityCols, productOutName].filter(Boolean)
+                  : trimAll(finalHeaders);
 
-                  const existingKeys = new Set(existingData.slice(1).map(r => `${idIdx !== -1 ? r[idIdx] : ''}|${ordIdx !== -1 ? r[ordIdx] : ''}|${rcvIdx !== -1 ? r[rcvIdx] : ''}|${prdIdx !== -1 ? r[prdIdx] : ''}`));
-                  
+              const recordOf = (row: any[]) => {
+                  const rec: Record<string, any> = {};
+                  trimAll(finalHeaders).forEach((h, i) => { rec[h] = row[i]; });
+                  return rec;
+              };
+              const keyOf = (row: any[]) => keyCols.map(c => String(recordOf(row)[c] ?? '').trim()).join('|');
+
+              const accrue = (nr: { order: MatchedOrder }) => {
+                  if (!nr.order.product) return;
+                  const { purchase } = purchaseOf(nr.order);
+                  const sup = supplierOf(nr.order.product);
+                  const acc = incremental[group.supplier] || (incremental[group.supplier] = emptySettlement(sup?.paymentTerms || ''));
+                  acc.supply += purchase.supply;
+                  acc.vat += purchase.vat;
+                  acc.total += purchase.total;
+                  acc.quantity += nr.order.quantity;
+                  acc.itemCount += 1;
+              };
+
+              let finalAoA: any[][];
+
+              if (existingData && existingData.length > 0 && !sameHeaders(existingData[0], finalHeaders)) {
+                  // 기존 파일의 헤더가 현재 양식과 다르다 → 이어붙이면 컬럼이 어긋난다.
+                  // 기존 파일은 건드리지 않고 새 파일로 저장한 뒤 사용자에게 알린다.
+                  fileName = `${group.fileName}_${stamp}.xlsx`;
+                  renamedFiles.push(`${group.supplier}/${group.fileName}.xlsx`);
+                  finalAoA = [finalHeaders, ...newRows.map(r => r.rowData)];
+                  newRows.forEach(accrue);
+              } else if (existingData && existingData.length > 0) {
+                  const seen = new Set(existingData.slice(1).map(r => keyOf(r as any[])));
                   finalAoA = [...existingData];
                   newRows.forEach(nr => {
-                      const key = `${idIdx !== -1 ? nr.rowData[getIdx(mapping.orderId)] : ''}|${ordIdx !== -1 ? nr.rowData[getIdx(mapping.orderer)] : ''}|${rcvIdx !== -1 ? nr.rowData[getIdx(mapping.receiver)] : ''}|${prdIdx !== -1 ? nr.rowData[prdIdx] : ''}`;
-                      if (!existingKeys.has(key)) {
-                          finalAoA.push(nr.rowData);
-                          if (nr.order.product) addedCost += (nr.order.product.purchaseCost || 0) * nr.order.quantity;
-                      }
+                      const key = keyOf(nr.rowData);
+                      if (seen.has(key)) return;
+                      seen.add(key);           // 같은 배치 안의 중복도 걸러진다
+                      finalAoA.push(nr.rowData);
+                      accrue(nr);
                   });
               } else {
                   finalAoA = [finalHeaders, ...newRows.map(r => r.rowData)];
-                  newRows.forEach(nr => { if (nr.order.product) addedCost += (nr.order.product.purchaseCost || 0) * nr.order.quantity; });
+                  newRows.forEach(accrue);
               }
 
               const wb = XLSX.utils.book_new();
@@ -337,28 +459,51 @@ export const InvoiceConverter: React.FC = () => {
               const writable = await fh.createWritable();
               await writable.write(XLSX.write(wb, { bookType: 'xlsx', type: 'array' }));
               await writable.close(); // 여기서 닫아야 'State cached' 에러 방지됨
-              incrementalCosts[group.supplier] = (incrementalCosts[group.supplier] || 0) + addedCost;
           }
 
-          const summaryFileName = `00_정산요약_${now.getDate()}.xlsx`;
+          let summaryFileName = `00_정산요약_${now.getDate()}.xlsx`;
           const existingSummary = await readExcelData(targetDir, summaryFileName);
-          let finalSummaryRows: any[] = [];
+          const merged: Record<string, SupplierSettlement> = {};
+          Object.entries(incremental).forEach(([sup, s]) => { merged[sup] = { ...s }; });
+
           if (existingSummary && existingSummary.length > 0) {
-              const summaryMap = new Map<string, number>(existingSummary.slice(1).map(r => [r[0], Number(r[1] || 0)]));
-              Object.entries(incrementalCosts).forEach(([sup, amt]) => summaryMap.set(sup, (summaryMap.get(sup) || 0) + amt));
-              finalSummaryRows = Array.from(summaryMap.entries()).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
-          } else {
-              finalSummaryRows = Object.entries(incrementalCosts).map(([sup, amt]) => ({ "발주처": sup, "일일 정산금 (지급액)": amt }));
+              if (sameHeaders(existingSummary[0], SUMMARY_COLUMNS as unknown as any[])) {
+                  existingSummary.slice(1).forEach(r => {
+                      const name = String(r[0] ?? '').trim();
+                      if (!name) return;
+                      const acc = merged[name] || (merged[name] = emptySettlement(String(r[6] ?? '')));
+                      acc.itemCount += Number(r[1]) || 0;
+                      acc.quantity += Number(r[2]) || 0;
+                      acc.supply += Number(r[3]) || 0;
+                      acc.vat += Number(r[4]) || 0;
+                      acc.total += Number(r[5]) || 0;
+                      if (!acc.paymentTerms) acc.paymentTerms = String(r[6] ?? '');
+                  });
+              } else {
+                  // 부가세 항목이 없던 예전 형식 → 기존 파일을 덮어쓰지 않고 새 이름으로 저장
+                  summaryFileName = `00_정산요약_${now.getDate()}_${stamp}.xlsx`;
+                  renamedFiles.push(`00_정산요약_${now.getDate()}.xlsx (예전 형식)`);
+              }
           }
+
           const sWb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(sWb, XLSX.utils.json_to_sheet(finalSummaryRows), "정산요약");
+          XLSX.utils.book_append_sheet(sWb, XLSX.utils.json_to_sheet(summaryRows(merged)), "정산요약");
           const sfh = await targetDir.getFileHandle(summaryFileName, { create: true });
           const sw = await sfh.createWritable();
           await sw.write(XLSX.write(sWb, { bookType: 'xlsx', type: 'array' }));
           await sw.close();
 
           await saveCrmDataOnly(salesRecordsToSave);
-          
+
+          if (renamedFiles.length > 0) {
+              alert(
+                  `양식이 바뀐 파일이 있어 기존 파일을 그대로 두고 새 파일로 저장했습니다.\n\n` +
+                  renamedFiles.slice(0, 5).join('\n') +
+                  (renamedFiles.length > 5 ? `\n...외 ${renamedFiles.length - 5}건` : '') +
+                  `\n\n이어붙였다면 컬럼이 어긋났을 수 있어 안전하게 분리했습니다. 두 파일을 확인 후 정리해주세요.`
+              );
+          }
+
           // 모달 상태 업데이트 (alert 제거)
           setSavedFolderInfo({ name: folderName });
       } catch (e: any) { if (e.name !== 'AbortError') alert("폴더 저장 오류: " + e.message); } finally { setIsFolderSaving(false); }
@@ -409,14 +554,50 @@ export const InvoiceConverter: React.FC = () => {
                 </div>
                 <div className="bg-white rounded-lg border p-4 mb-6 shadow-sm">
                     <h4 className="text-sm font-bold mb-3 flex items-center gap-2"><DollarSign size={16}/> 금일 발주처 정산 요약</h4>
-                    <div className="space-y-2 max-h-40 overflow-y-auto">
-                        {Object.entries(financialSummary).map(([sup, amt]) => (
-                            <div key={sup} className="flex justify-between text-xs border-b border-slate-50 pb-1">
-                                <span className="text-slate-600">{sup}</span>
-                                <span className="font-bold text-red-500">{amt.toLocaleString()} 원</span>
-                            </div>
-                        ))}
+                    <div className="overflow-x-auto max-h-52 overflow-y-auto">
+                        <table className="w-full text-xs">
+                            <thead className="text-[10px] text-slate-400 uppercase tracking-wider border-b">
+                                <tr>
+                                    <th className="text-left font-bold py-1.5">발주처</th>
+                                    <th className="text-right font-bold py-1.5">수량</th>
+                                    <th className="text-right font-bold py-1.5">공급가액</th>
+                                    <th className="text-right font-bold py-1.5">부가세</th>
+                                    <th className="text-right font-bold py-1.5 text-red-500">지급액</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                                {settlementEntries(financialSummary).map(([sup, s]) => (
+                                    <tr key={sup}>
+                                        <td className="py-1.5 text-slate-600 pr-2">{sup}</td>
+                                        <td className="py-1.5 text-right font-mono text-slate-400">{s.quantity.toLocaleString()}</td>
+                                        <td className="py-1.5 text-right font-mono text-slate-500">{s.supply.toLocaleString()}</td>
+                                        <td className="py-1.5 text-right font-mono text-slate-400">{s.vat.toLocaleString()}</td>
+                                        <td className="py-1.5 text-right font-mono font-bold text-red-500">{s.total.toLocaleString()}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                            <tfoot className="border-t-2 border-slate-200">
+                                <tr>
+                                    <td className="py-2 font-bold text-slate-700">합계</td>
+                                    <td className="py-2 text-right font-mono text-slate-500">
+                                        {settlementTotals(financialSummary).quantity.toLocaleString()}
+                                    </td>
+                                    <td className="py-2 text-right font-mono text-slate-600">
+                                        {settlementTotals(financialSummary).supply.toLocaleString()}
+                                    </td>
+                                    <td className="py-2 text-right font-mono text-slate-500">
+                                        {settlementTotals(financialSummary).vat.toLocaleString()}
+                                    </td>
+                                    <td className="py-2 text-right font-mono font-black text-red-600">
+                                        {settlementTotals(financialSummary).total.toLocaleString()} 원
+                                    </td>
+                                </tr>
+                            </tfoot>
+                        </table>
                     </div>
+                    <p className="text-[10px] text-slate-400 mt-2">
+                        * 매입가가 부가세 포함가인지 여부는 발주처 설정을 따릅니다. 면세 품목은 부가세가 0원으로 계산됩니다.
+                    </p>
                 </div>
                 <div className="flex items-center gap-2 bg-blue-50 p-3 rounded-lg mb-4">
                     <input type="checkbox" id="saveCrm" checked={saveToCrm} onChange={e => setSaveToCrm(e.target.checked)} className="rounded text-primary"/>

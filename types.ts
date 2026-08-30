@@ -1,20 +1,45 @@
 
+/** 과세 구분 */
+export type VatType = 'taxable' | 'exempt';
+
+/**
+ * 발주처 마스터.
+ * 이전에는 제품마다 발주처명을 자유 텍스트로 입력해서 "한일식품"과 "한일 식품"이
+ * 서로 다른 업체로 갈라졌다. 이제 발주처를 별도 레코드로 등록하고 제품은 참조만 한다.
+ */
+export interface Supplier {
+  id: string;
+  name: string;          // 발주처명 (고유)
+  code?: string;         // 내부 관리 코드
+  manager?: string;      // 담당자
+  phone?: string;
+  email?: string;
+  bizNo?: string;        // 사업자등록번호
+  paymentTerms?: string; // 결제 조건 (예: 월말결산 익월 15일)
+  /** 제품에 등록된 매입가가 부가세를 포함한 금액인지 여부. 기본 true(포함) */
+  vatIncluded: boolean;
+  memo?: string;
+  user_id?: string;
+}
+
 export interface Product {
   id: string;
   sku: string;
   name: string;
   additionalName?: string; // 추가 제품명
   useAdditionalName?: boolean; // 추가 제품명 사용 여부
-  supplierName: string; // 발주처명 (Company Name)
+  supplierName: string; // 발주처명 (표시/하위호환용. 정본은 supplierId)
+  supplierId?: string;  // 발주처 마스터 참조
   templateId: string; // Links to an InvoiceTemplate
   user_id?: string; // Supabase owner
-  
+
   // Financial Fields (New)
   purchaseCost?: number; // 매입가 (발주처에 줄 돈)
   salesPrice?: number;   // 판매가 (고객에게 받은 돈)
   shippingCost?: number; // 택배비용
   otherCost?: number;    // 기타비용 (포장비 등)
   marketFeeRate?: number; // 마켓 수수료율 (%)
+  vatType?: VatType;      // 과세/면세 구분 (기본 과세)
 }
 
 export interface SalesRecord {
@@ -24,14 +49,17 @@ export interface SalesRecord {
   product_name: string;
   product_sku: string;
   supplier_name: string;
+  supplier_id?: string;
   order_id?: string; // 주문번호 (중복 체크용)
   quantity: number;
-  
+
   unit_sales_price: number;
   unit_purchase_cost: number;
-  
+
   total_sales_amount: number; // 매출액
-  total_purchase_amount: number; // 매입액 (정산금)
+  total_purchase_amount: number; // 매입액 (정산금, 부가세 포함 합계)
+  total_supply_amount?: number;  // 매입 공급가액 (부가세 제외)
+  total_vat_amount?: number;     // 매입 부가세
   total_shipping_cost: number;
   total_market_fee: number;
   net_profit: number; // 순수익

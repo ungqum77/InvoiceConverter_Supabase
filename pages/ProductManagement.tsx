@@ -2,8 +2,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { Plus, Trash2, Search, Save, X, FileSpreadsheet, Upload, Settings2, Building2, Tag, CheckSquare, Pencil, Lock, Zap, UserCog, LogOut, AlertOctagon, Calendar, History, Clock, Download, ArrowUpCircle, CreditCard, Award, Youtube, AlertTriangle, RefreshCw, ExternalLink, Sparkles, ChevronRight, FileUp, Check, ArrowDownCircle, DollarSign, PackageCheck } from 'lucide-react';
-import { Product, InvoiceTemplate, UserProfile, ActivityLog, Tier } from '../types';
-import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchTemplates, createTemplate, deleteTemplate, getUserProfile, getUsageStats, createProductsBulk, fetchActivityLogs, fetchAppSettings, AppSettings, trackEvent } from '../services/dbService';
+import { Product, InvoiceTemplate, UserProfile, ActivityLog, Tier, Supplier, VatType } from '../types';
+import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchTemplates, createTemplate, deleteTemplate, getUserProfile, getUsageStats, createProductsBulk, fetchActivityLogs, fetchAppSettings, AppSettings, trackEvent, fetchSuppliers, createSupplier, updateSupplier, deleteSupplier, migrateSuppliersFromProducts, getSchemaSupport, resetSchemaCache, SchemaSupport } from '../services/dbService';
+import { calcProfit } from '../services/calc';
 import { supabase } from '../services/supabase';
 import { Button } from '../components/Button';
 import { useAuth } from '../contexts/AuthContext';
@@ -38,9 +39,11 @@ export const ProductManagement: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   
-  const [activeTab, setActiveTab] = useState<'templates' | 'products' | 'account'>('templates');
+  const [activeTab, setActiveTab] = useState<'templates' | 'suppliers' | 'products' | 'account'>('templates');
   const [products, setProducts] = useState<Product[]>([]);
   const [templates, setTemplates] = useState<InvoiceTemplate[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [schema, setSchema] = useState<SchemaSupport>({ suppliers: false, productVat: false, salesVat: false });
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [stats, setStats] = useState({ productCount: 0, templateCount: 0 });
@@ -66,6 +69,7 @@ export const ProductManagement: React.FC = () => {
   const [newSku, setNewSku] = useState('');
   const [newName, setNewName] = useState('');
   const [newSupplier, setNewSupplier] = useState('');
+  const [newSupplierId, setNewSupplierId] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [newAdditionalName, setNewAdditionalName] = useState('');
   const [newUseAdditionalName, setNewUseAdditionalName] = useState(false);
@@ -76,6 +80,14 @@ export const ProductManagement: React.FC = () => {
   const [shippingCost, setShippingCost] = useState(0);
   const [otherCost, setOtherCost] = useState(0);
   const [marketFeeRate, setMarketFeeRate] = useState(0);
+  const [vatType, setVatType] = useState<VatType>('taxable');
+
+  // Supplier modal
+  const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
+  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const blankSupplier = { name: '', code: '', manager: '', phone: '', email: '', bizNo: '', paymentTerms: '', vatIncluded: true, memo: '' };
+  const [supplierForm, setSupplierForm] = useState<Omit<Supplier, 'id' | 'user_id'>>(blankSupplier);
 
   const templateFileRef = useRef<HTMLInputElement>(null);
   const bulkFileRef = useRef<HTMLInputElement>(null);
@@ -83,7 +95,7 @@ export const ProductManagement: React.FC = () => {
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam === 'account' || tabParam === 'products' || tabParam === 'templates') setActiveTab(tabParam);
+    if (tabParam === 'account' || tabParam === 'products' || tabParam === 'templates' || tabParam === 'suppliers') setActiveTab(tabParam);
   }, [searchParams]);
 
   useEffect(() => {
@@ -95,13 +107,16 @@ export const ProductManagement: React.FC = () => {
     setLoading(true);
     try {
       if (user) {
-          const [prodData, tplData, userData, usageData, logData, settingsData] = await Promise.all([
+          const schemaData = await getSchemaSupport();
+          setSchema(schemaData);
+          const [prodData, tplData, userData, usageData, logData, settingsData, supData] = await Promise.all([
             fetchProducts(),
             fetchTemplates(),
             getUserProfile(user.id),
             getUsageStats(user.id),
             fetchActivityLogs(user.id),
-            fetchAppSettings()
+            fetchAppSettings(),
+            fetchSuppliers()
           ]);
           setProducts(prodData);
           setTemplates(tplData);
@@ -109,6 +124,7 @@ export const ProductManagement: React.FC = () => {
           if (usageData) setStats(usageData);
           setLogs(logData);
           setAppSettings(settingsData);
+          setSuppliers(supData);
       }
     } catch (error) { console.error(error); } finally { setLoading(false); }
   };
@@ -132,6 +148,11 @@ export const ProductManagement: React.FC = () => {
       setNewSku(productToEdit.sku);
       setNewName(productToEdit.name);
       setNewSupplier(productToEdit.supplierName);
+      setNewSupplierId(
+        productToEdit.supplierId
+        || suppliers.find(s => s.name.trim() === String(productToEdit.supplierName || '').trim())?.id
+        || ''
+      );
       setSelectedTemplateId(productToEdit.templateId);
       setNewAdditionalName(productToEdit.additionalName || '');
       setNewUseAdditionalName(productToEdit.useAdditionalName || false);
@@ -141,11 +162,13 @@ export const ProductManagement: React.FC = () => {
       setShippingCost(productToEdit.shippingCost || 0);
       setOtherCost(productToEdit.otherCost || 0);
       setMarketFeeRate(productToEdit.marketFeeRate || 0);
+      setVatType(productToEdit.vatType || 'taxable');
     } else {
       setEditingProductId(null);
       setNewSku('');
       setNewName('');
       setNewSupplier('');
+      setNewSupplierId('');
       setSelectedTemplateId('');
       setNewAdditionalName('');
       setNewUseAdditionalName(false);
@@ -155,13 +178,19 @@ export const ProductManagement: React.FC = () => {
       setShippingCost(0);
       setOtherCost(0);
       setMarketFeeRate(0);
+      setVatType('taxable');
     }
     setIsProductModalOpen(true);
   };
 
+  /** 발주처 마스터를 쓰는 경우 선택된 id에서 이름을 가져온다(오타로 업체가 갈라지는 것을 방지). */
+  const resolvedSupplierName = schema.suppliers
+    ? (suppliers.find(s => s.id === newSupplierId)?.name || '')
+    : newSupplier;
+
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSku || !newName || !newSupplier || !selectedTemplateId) return;
+    if (!newSku || !newName || !resolvedSupplierName || !selectedTemplateId) return;
 
     // [중복 체크] SKU 중복 확인
     const normalizedSku = newSku.trim();
@@ -175,10 +204,11 @@ export const ProductManagement: React.FC = () => {
     }
 
     try {
-      const payload = { 
-        sku: normalizedSku, 
-        name: newName, 
-        supplierName: newSupplier, 
+      const payload = {
+        sku: normalizedSku,
+        name: newName,
+        supplierName: resolvedSupplierName,
+        supplierId: schema.suppliers ? (newSupplierId || undefined) : undefined,
         templateId: selectedTemplateId,
         additionalName: newAdditionalName,
         useAdditionalName: newUseAdditionalName,
@@ -187,7 +217,8 @@ export const ProductManagement: React.FC = () => {
         purchaseCost,
         shippingCost,
         otherCost,
-        marketFeeRate
+        marketFeeRate,
+        vatType
       };
       if (editingProductId) await updateProduct(editingProductId, payload);
       else await createProduct(payload);
@@ -197,6 +228,68 @@ export const ProductManagement: React.FC = () => {
   };
 
   const handleProductDelete = async (id: string) => { if (window.confirm('삭제하시겠습니까?')) { await deleteProduct(id); loadData(); } };
+
+  /* ------------------------- 발주처 관리 ------------------------- */
+
+  const openSupplierModal = (s?: Supplier) => {
+    if (s) {
+      setEditingSupplierId(s.id);
+      setSupplierForm({
+        name: s.name, code: s.code || '', manager: s.manager || '', phone: s.phone || '',
+        email: s.email || '', bizNo: s.bizNo || '', paymentTerms: s.paymentTerms || '',
+        vatIncluded: s.vatIncluded, memo: s.memo || '',
+      });
+    } else {
+      setEditingSupplierId(null);
+      setSupplierForm(blankSupplier);
+    }
+    setIsSupplierModalOpen(true);
+  };
+
+  const handleSupplierSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = supplierForm.name.trim();
+    if (!name) return;
+    if (suppliers.some(s => s.name.trim() === name && s.id !== editingSupplierId)) {
+      alert(`이미 등록된 발주처입니다: ${name}`);
+      return;
+    }
+    try {
+      if (editingSupplierId) await updateSupplier(editingSupplierId, supplierForm);
+      else await createSupplier(supplierForm);
+      setIsSupplierModalOpen(false);
+      loadData();
+    } catch (err: any) { alert(err.message); }
+  };
+
+  const handleSupplierDelete = async (s: Supplier) => {
+    if (!window.confirm(`'${s.name}' 발주처를 삭제하시겠습니까?`)) return;
+    try { await deleteSupplier(s.id); loadData(); }
+    catch (err: any) { alert(err.message); }
+  };
+
+  const handleMigrateSuppliers = async () => {
+    if (!window.confirm(
+      '제품에 입력된 발주처명을 읽어 발주처 목록을 자동으로 만들고 연결합니다.\n' +
+      '기존 데이터는 지워지지 않으며, 여러 번 실행해도 안전합니다.\n\n진행할까요?'
+    )) return;
+    setIsMigrating(true);
+    try {
+      const { created, linked } = await migrateSuppliersFromProducts();
+      alert(`발주처 ${created}곳을 새로 만들고, 제품 ${linked}건을 연결했습니다.`);
+      loadData();
+    } catch (err: any) { alert('이관 중 오류: ' + err.message); }
+    finally { setIsMigrating(false); }
+  };
+
+  /** 발주처별 제품 수 */
+  const productCountBySupplier = (s: Supplier) =>
+    products.filter(p => p.supplierId === s.id || (!p.supplierId && p.supplierName?.trim() === s.name.trim())).length;
+
+  /** 발주처 마스터에 없는 발주처명(오타 의심) */
+  const orphanSupplierNames = Array.from(new Set(
+    products.filter(p => !p.supplierId).map(p => String(p.supplierName || '').trim()).filter(Boolean)
+  )).filter(n => !suppliers.some(s => s.name.trim() === n));
   
   const handleTemplateDelete = async (id: string) => {
     if (window.confirm('양식을 삭제하시겠습니까? 관련 제품의 송장 출력이 불가능해질 수 있습니다.')) {
@@ -267,6 +360,8 @@ export const ProductManagement: React.FC = () => {
         const data = XLSX.utils.sheet_to_json(sheet as any) as any[];
         
         const templateMap = new Map<string, string>(templates.map(t => [t.name.trim(), t.id]));
+        const supplierByName = new Map<string, Supplier>(suppliers.map(s => [s.name.trim(), s]));
+        const unknownSuppliers = new Set<string>();
         const existingSkus = new Set(products.map(p => p.sku));
         const newSkusInFile = new Set<string>();
         
@@ -306,20 +401,37 @@ export const ProductManagement: React.FC = () => {
               return;
           }
 
+          // 발주처 마스터를 쓰는 경우, 이름이 목록에 있으면 연결한다.
+          const matchedSupplier = supplierByName.get(supplier);
+          if (schema.suppliers && !matchedSupplier) unknownSuppliers.add(supplier);
+
+          const vatRaw = String(row['과세구분'] || '').trim();
+          const vat: VatType = ['면세', 'EXEMPT', '면'].includes(vatRaw.toUpperCase()) ? 'exempt' : 'taxable';
+
           newSkusInFile.add(sku);
-          payload.push({ 
-              sku, name, supplierName: supplier, templateId: tplId,
+          payload.push({
+              sku, name,
+              supplierName: matchedSupplier?.name || supplier,
+              supplierId: matchedSupplier?.id,
+              templateId: tplId,
               additionalName: String(row['대체제품명'] || '').trim() || undefined,
               useAdditionalName: ['Y', 'YES', '1'].includes(String(row['대체제품명사용'] || '').trim().toUpperCase()),
               salesPrice: Number(row['판매가'] || 0),
               purchaseCost: Number(row['매입가'] || 0),
               shippingCost: Number(row['배송비'] || 0),
               otherCost: Number(row['기타비용'] || 0),
-              marketFeeRate: Number(row['수수료율'] || 0)
+              marketFeeRate: Number(row['수수료율'] || 0),
+              vatType: vat
           });
         });
 
         let confirmMsg = '';
+
+        if (unknownSuppliers.size > 0) {
+            confirmMsg += `ℹ️ [발주처 목록에 없는 이름 ${unknownSuppliers.size}건]\n` +
+              `${Array.from(unknownSuppliers).slice(0, 3).join(', ')}${unknownSuppliers.size > 3 ? ' 외' : ''}\n` +
+              `등록은 진행되지만 발주처 탭에서 '기존 제품에서 가져오기'로 연결해주세요.\n\n`;
+        }
 
         if (errors.length > 0) {
             confirmMsg += `⛔ [입력 오류 ${errors.length}건] (등록 제외)\n${errors.slice(0,3).join('\n')}${errors.length>3 ? `\n...외 ${errors.length-3}건` : ''}\n\n`;
@@ -348,7 +460,7 @@ export const ProductManagement: React.FC = () => {
   const downloadSampleExcel = () => {
     const data = [{ 
         "SKU(필수)": "PROD-001", "제품명(필수)": "샘플상품", "발주처(필수)": "공급사A", "적용양식명(필수)": templates[0]?.name || "기본양식",
-        "대체제품명": "", "대체제품명사용": "N",
+        "대체제품명": "", "대체제품명사용": "N", "과세구분": "과세",
         "판매가": 10000, "매입가": 5000, "배송비": 3000, "기타비용": 500, "수수료율": 10
     }];
     const wb = XLSX.utils.book_new();
@@ -378,10 +490,21 @@ export const ProductManagement: React.FC = () => {
 
   const handleSubscriptionLink = (url: string) => { if (url) window.open(url, '_blank'); else alert("준비 중입니다."); };
 
-  // Helper to estimate profit for UI
-  const estProfit = (p: number, c: number, s: number, o: number, f: number) => {
-      // 매출 - 매입 - 택배비 - 기타 - 수수료
-      return Math.round(p - c - s - o - (p * (f/100)));
+  // 개당 예상 순수익. 계산식은 services/calc.ts 한 곳에만 존재한다.
+  const estProfit = (product: Partial<Product>) => {
+      const supplier = product.supplierId
+          ? suppliers.find(s => s.id === product.supplierId)
+          : suppliers.find(s => s.name.trim() === String(product.supplierName || '').trim());
+      return calcProfit({
+          salesPrice: product.salesPrice,
+          purchaseCost: product.purchaseCost,
+          shippingCost: product.shippingCost,
+          otherCost: product.otherCost,
+          marketFeeRate: product.marketFeeRate,
+          vatType: product.vatType,
+          costIncludesVat: supplier?.vatIncluded ?? true,
+          qty: 1,
+      }).netProfit;
   };
 
   return (
@@ -398,10 +521,13 @@ export const ProductManagement: React.FC = () => {
 
       <div className="mb-6">
         <nav className="flex space-x-8 border-b border-slate-200">
-          {['templates', 'products', 'account'].map(t => (
+          {['templates', 'suppliers', 'products', 'account'].map(t => (
             <button key={t} onClick={() => setActiveTab(t as any)} className={`${activeTab === t ? 'border-primary text-primary' : 'border-transparent text-slate-500'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 capitalize transition-all`}>
-              {t === 'templates' ? <FileSpreadsheet size={16} /> : t === 'products' ? <Search size={16} /> : <UserCog size={16} />}
-              {t === 'templates' ? '송장 양식' : t === 'products' ? '제품 목록 (CRM)' : '계정 정보'}
+              {t === 'templates' ? <FileSpreadsheet size={16} /> : t === 'suppliers' ? <Building2 size={16} /> : t === 'products' ? <Search size={16} /> : <UserCog size={16} />}
+              {t === 'templates' ? '송장 양식' : t === 'suppliers' ? '발주처' : t === 'products' ? '제품 목록 (CRM)' : '계정 정보'}
+              {t === 'suppliers' && orphanSupplierNames.length > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">{orphanSupplierNames.length}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -440,6 +566,100 @@ export const ProductManagement: React.FC = () => {
               </>
             )}
 
+            {/* Suppliers Tab (New) */}
+            {activeTab === 'suppliers' && (
+              <>
+                {!schema.suppliers ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
+                    <h3 className="font-bold text-amber-900 flex items-center gap-2 mb-2"><AlertTriangle size={18}/> 발주처 기능을 아직 쓸 수 없습니다</h3>
+                    <p className="text-sm text-amber-800 leading-relaxed">
+                      데이터베이스에 <code className="bg-white px-1.5 py-0.5 rounded border text-xs">suppliers</code> 테이블이 없습니다.
+                      프로젝트의 <code className="bg-white px-1.5 py-0.5 rounded border text-xs">supabase/migration.sql</code> 내용을
+                      Supabase 대시보드의 SQL Editor에 붙여넣고 실행한 뒤 아래 버튼을 눌러주세요.
+                      <br />기존 기능은 그대로 동작하며, 실행 전까지 발주처는 제품에 입력한 이름으로만 처리됩니다.
+                    </p>
+                    <Button size="sm" className="mt-4" icon={<RefreshCw size={14}/>} onClick={() => { resetSchemaCache(); loadData(); }}>
+                      적용 여부 다시 확인
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                      <p className="text-xs text-slate-500">
+                        발주처를 여기에 등록해두면 제품 등록 시 <b>목록에서 선택</b>하게 되어, 오타로 같은 업체가 둘로 갈라지는 일이 없어집니다.
+                      </p>
+                      <div className="flex gap-2 shrink-0">
+                        <Button size="sm" variant="secondary" isLoading={isMigrating} onClick={handleMigrateSuppliers} icon={<ArrowDownCircle size={16} />}>기존 제품에서 가져오기</Button>
+                        <Button size="sm" onClick={() => openSupplierModal()} icon={<Plus size={16} />}>발주처 등록</Button>
+                      </div>
+                    </div>
+
+                    {orphanSupplierNames.length > 0 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                        <div className="font-bold text-amber-900 text-xs mb-2 flex items-center gap-1.5">
+                          <AlertTriangle size={14}/> 발주처 목록에 없는 이름이 제품에 {orphanSupplierNames.length}개 남아 있습니다
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {orphanSupplierNames.map(n => (
+                            <span key={n} className="text-[11px] bg-white border border-amber-200 px-2 py-0.5 rounded text-amber-800">{n}</span>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-amber-700 mt-2">'기존 제품에서 가져오기'를 누르면 자동으로 등록·연결됩니다.</p>
+                      </div>
+                    )}
+
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-50 border-b text-slate-500 font-bold uppercase tracking-wider">
+                            <tr>
+                              <th className="px-6 py-3">발주처명</th>
+                              <th className="px-6 py-3">담당자</th>
+                              <th className="px-6 py-3">연락처</th>
+                              <th className="px-6 py-3">결제조건</th>
+                              <th className="px-6 py-3 text-center">매입가 기준</th>
+                              <th className="px-6 py-3 text-right">연결 제품</th>
+                              <th className="px-6 py-3 text-right">관리</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {suppliers.length === 0 && (
+                              <tr><td colSpan={7} className="px-6 py-10 text-center text-slate-400">
+                                등록된 발주처가 없습니다. '기존 제품에서 가져오기'로 한 번에 만들 수 있습니다.
+                              </td></tr>
+                            )}
+                            {suppliers.map(s => (
+                              <tr key={s.id} className="hover:bg-slate-50">
+                                <td className="px-6 py-4 font-bold text-slate-800">
+                                  {s.name}
+                                  {s.code && <span className="ml-2 text-[10px] font-mono text-slate-400">{s.code}</span>}
+                                </td>
+                                <td className="px-6 py-4">{s.manager || '-'}</td>
+                                <td className="px-6 py-4 font-mono text-slate-500">{s.phone || '-'}</td>
+                                <td className="px-6 py-4">{s.paymentTerms || '-'}</td>
+                                <td className="px-6 py-4 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${s.vatIncluded ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-600'}`}>
+                                    {s.vatIncluded ? '부가세 포함' : '부가세 별도'}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-right font-mono">{productCountBySupplier(s)}</td>
+                                <td className="px-6 py-4 text-right">
+                                  <div className="flex justify-end gap-2">
+                                    <button onClick={() => openSupplierModal(s)} className="p-1.5 text-slate-400 hover:text-blue-600"><Pencil size={16} /></button>
+                                    <button onClick={() => handleSupplierDelete(s)} className="p-1.5 text-slate-400 hover:text-red-600"><Trash2 size={16} /></button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
             {/* Products Tab (Financials Added) */}
             {activeTab === 'products' && (
               <>
@@ -474,13 +694,7 @@ export const ProductManagement: React.FC = () => {
                               <td className="px-6 py-4 text-right font-mono text-slate-500">{p.purchaseCost?.toLocaleString()}</td>
                               <td className="px-6 py-4 text-right font-mono font-bold">{p.salesPrice?.toLocaleString()}</td>
                               <td className="px-6 py-4 text-right font-mono text-indigo-600 font-bold">
-                                  {estProfit(
-                                      p.salesPrice || 0, 
-                                      p.purchaseCost || 0, 
-                                      p.shippingCost || 0,
-                                      p.otherCost || 0,
-                                      p.marketFeeRate || 0
-                                  ).toLocaleString()}
+                                  {estProfit(p).toLocaleString()}
                               </td>
                               <td className="px-6 py-4 text-right">
                                 <div className="flex justify-end gap-2">
@@ -547,8 +761,18 @@ export const ProductManagement: React.FC = () => {
                 <input required placeholder="예: 대왕 치즈 스틱" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary/20 outline-none" value={newName} onChange={e => setNewName(e.target.value)} />
               </div>
               <div>
-                <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">발주처명 (필수)</label>
-                <input required placeholder="예: (주)에이비씨" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary/20 outline-none" value={newSupplier} onChange={e => setNewSupplier(e.target.value)} />
+                <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">발주처 (필수)</label>
+                {schema.suppliers ? (
+                  <>
+                    <select required className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm bg-white focus:ring-2 focus:ring-primary/20 outline-none" value={newSupplierId} onChange={e => setNewSupplierId(e.target.value)}>
+                        <option value="">발주처 선택 *</option>
+                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                    <button type="button" onClick={() => { setIsProductModalOpen(false); setActiveTab('suppliers'); openSupplierModal(); }} className="text-[10px] text-primary hover:underline mt-1">+ 새 발주처 등록하기</button>
+                  </>
+                ) : (
+                  <input required placeholder="예: (주)에이비씨" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-primary/20 outline-none" value={newSupplier} onChange={e => setNewSupplier(e.target.value)} />
+                )}
               </div>
               <div>
                 <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">송장 양식 (필수)</label>
@@ -583,6 +807,25 @@ export const ProductManagement: React.FC = () => {
               <div>
                 <label className="text-[11px] font-bold text-red-500 mb-1.5 block">매입가 (발주처 지급액)</label>
                 <input type="number" className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-bold text-red-900 focus:ring-2 focus:ring-red-500/20 outline-none" value={purchaseCost} onChange={e => setPurchaseCost(Number(e.target.value))} />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {(suppliers.find(s => s.id === newSupplierId)?.vatIncluded ?? true)
+                    ? '이 발주처는 매입가를 부가세 포함으로 봅니다.'
+                    : '이 발주처는 매입가를 부가세 별도로 봅니다 (지급 시 10% 추가).'}
+                </p>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">과세 구분</label>
+                <div className="flex gap-2">
+                  {([['taxable', '과세 (부가세 10%)'], ['exempt', '면세 (부가세 없음)']] as [VatType, string][]).map(([v, label]) => (
+                    <button key={v} type="button" onClick={() => setVatType(v)}
+                      className={`flex-1 py-2.5 rounded-lg text-xs font-bold border transition-colors ${vatType === v ? 'bg-primary text-white border-primary' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {!schema.productVat && (
+                  <p className="text-[10px] text-amber-600 mt-1">* 마이그레이션 SQL 실행 전이라 과세 구분은 아직 저장되지 않습니다.</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -606,13 +849,70 @@ export const ProductManagement: React.FC = () => {
               <div className="md:col-span-2 bg-indigo-50 border border-indigo-100 rounded-lg p-4 flex justify-between items-center">
                   <span className="text-xs font-bold text-indigo-800">예상 개당 순수익</span>
                   <span className="text-lg font-black text-indigo-600">
-                      {estProfit(salesPrice, purchaseCost, shippingCost, otherCost, marketFeeRate).toLocaleString()} 원
+                      {estProfit({ salesPrice, purchaseCost, shippingCost, otherCost, marketFeeRate, vatType, supplierId: newSupplierId, supplierName: resolvedSupplierName }).toLocaleString()} 원
                   </span>
               </div>
 
               <div className="md:col-span-2 flex justify-end gap-2 pt-4 border-t border-slate-100">
                   <button type="button" onClick={() => setIsProductModalOpen(false)} className="px-5 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">취소</button>
                   <button type="submit" className="px-6 py-2.5 text-sm font-bold text-white bg-primary rounded-lg hover:bg-primary-hover transition-all shadow-lg shadow-primary/20">저장</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isSupplierModalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-fade-in my-8">
+            <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2"><Building2 size={18}/> {editingSupplierId ? '발주처 수정' : '발주처 등록'}</h3>
+              <button onClick={() => setIsSupplierModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleSupplierSubmit} className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">발주처명 (필수)</label>
+                <input required autoFocus placeholder="예: (주)한일식품" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                  value={supplierForm.name} onChange={e => setSupplierForm({ ...supplierForm, name: e.target.value })} />
+              </div>
+              {([
+                ['code', '관리 코드', '예: A01'],
+                ['manager', '담당자', '예: 김철수'],
+                ['phone', '연락처', '예: 010-1234-5678'],
+                ['email', '이메일', '예: kim@hanil.co.kr'],
+                ['bizNo', '사업자등록번호', '예: 123-45-67890'],
+                ['paymentTerms', '결제조건', '예: 월말결산 익월 15일'],
+              ] as [keyof typeof supplierForm, string, string][]).map(([key, label, ph]) => (
+                <div key={String(key)}>
+                  <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">{label}</label>
+                  <input placeholder={ph} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                    value={String(supplierForm[key] ?? '')} onChange={e => setSupplierForm({ ...supplierForm, [key]: e.target.value })} />
+                </div>
+              ))}
+              <div className="md:col-span-2 bg-slate-50 border border-slate-100 rounded-lg p-4">
+                <div className="text-xs font-bold text-slate-700 mb-2">제품에 등록한 매입가의 기준</div>
+                <div className="flex gap-2">
+                  {([[true, '부가세 포함가'], [false, '부가세 별도']] as [boolean, string][]).map(([v, label]) => (
+                    <button key={String(v)} type="button" onClick={() => setSupplierForm({ ...supplierForm, vatIncluded: v })}
+                      className={`flex-1 py-2.5 rounded-lg text-xs font-bold border transition-colors ${supplierForm.vatIncluded === v ? 'bg-primary text-white border-primary' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
+                  <b>부가세 포함가</b>: 매입가 10,000원 → 공급가액 9,091 + 부가세 909 = 지급액 10,000원<br/>
+                  <b>부가세 별도</b>: 매입가 10,000원 → 공급가액 10,000 + 부가세 1,000 = 지급액 11,000원<br/>
+                  기존 데이터와 금액이 달라지지 않도록 기본값은 '부가세 포함가'입니다.
+                </p>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">메모</label>
+                <input className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/20"
+                  value={supplierForm.memo || ''} onChange={e => setSupplierForm({ ...supplierForm, memo: e.target.value })} />
+              </div>
+              <div className="md:col-span-2 flex justify-end gap-2 pt-4 border-t border-slate-100">
+                <button type="button" onClick={() => setIsSupplierModalOpen(false)} className="px-5 py-2.5 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">취소</button>
+                <button type="submit" className="px-6 py-2.5 text-sm font-bold text-white bg-primary rounded-lg hover:bg-primary-hover transition-all shadow-lg shadow-primary/20">저장</button>
               </div>
             </form>
           </div>

@@ -1,6 +1,6 @@
 
 import { supabase } from './supabase';
-import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings, AnalyticsEvent, BlogPost, UserGuide } from '../types';
+import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings, AnalyticsEvent, BlogPost, UserGuide, Supplier } from '../types';
 
 export type { AppSettings };
 
@@ -12,6 +12,7 @@ const mapProductFromDB = (data: any): Product => ({
   additionalName: data.additional_name,
   useAdditionalName: data.use_additional_name,
   supplierName: data.supplier_name,
+  supplierId: data.supplier_id || undefined,
   templateId: data.template_id,
   user_id: data.user_id,
   // Financial Mapping
@@ -20,7 +21,155 @@ const mapProductFromDB = (data: any): Product => ({
   shippingCost: data.shipping_cost || 0,
   otherCost: data.other_cost || 0,
   marketFeeRate: data.market_fee_rate || 0,
+  vatType: data.vat_type === 'exempt' ? 'exempt' : 'taxable',
 });
+
+const mapSupplierFromDB = (data: any): Supplier => ({
+  id: data.id,
+  name: data.name,
+  code: data.code || '',
+  manager: data.manager || '',
+  phone: data.phone || '',
+  email: data.email || '',
+  bizNo: data.biz_no || '',
+  paymentTerms: data.payment_terms || '',
+  vatIncluded: data.vat_included === false ? false : true,
+  memo: data.memo || '',
+  user_id: data.user_id,
+});
+
+/* ------------------------------------------------------------------ *
+ * 스키마 지원 여부 감지
+ *
+ * suppliers 테이블과 vat_type 컬럼은 마이그레이션 SQL을 실행해야 생긴다.
+ * 아직 실행하지 않은 사용자의 앱이 깨지지 않도록, 새 필드는 지원이 확인된
+ * 경우에만 읽고 쓴다. (supabase/migration.sql 참고)
+ * ------------------------------------------------------------------ */
+export interface SchemaSupport {
+  suppliers: boolean;   // suppliers 테이블 + products.supplier_id
+  productVat: boolean;  // products.vat_type
+  salesVat: boolean;    // sales_records.total_vat_amount
+}
+
+let schemaCache: SchemaSupport | null = null;
+
+export const getSchemaSupport = async (force = false): Promise<SchemaSupport> => {
+  if (schemaCache && !force) return schemaCache;
+  if (!supabase) {
+    schemaCache = { suppliers: false, productVat: false, salesVat: false };
+    return schemaCache;
+  }
+  const probe = async (table: string, columns: string) => {
+    try {
+      const { error } = await supabase.from(table).select(columns).limit(1);
+      return !error;
+    } catch (e) { return false; }
+  };
+  const [suppliers, productVat, salesVat] = await Promise.all([
+    (async () => (await probe('suppliers', 'id')) && (await probe('products', 'supplier_id')))(),
+    probe('products', 'vat_type'),
+    probe('sales_records', 'total_vat_amount'),
+  ]);
+  schemaCache = { suppliers, productVat, salesVat };
+  return schemaCache;
+};
+
+/** 마이그레이션을 방금 실행한 경우 캐시를 비우기 위해 사용 */
+export const resetSchemaCache = () => { schemaCache = null; };
+
+/* ----------------------------- 발주처 ----------------------------- */
+
+export const fetchSuppliers = async (): Promise<Supplier[]> => {
+  const schema = await getSchemaSupport();
+  if (!supabase || !schema.suppliers) return [];
+  const { data, error } = await supabase.from('suppliers').select('*').order('name');
+  if (error) return [];
+  return (data || []).map(mapSupplierFromDB);
+};
+
+const supplierPayload = (s: Partial<Supplier>) => {
+  const p: any = {};
+  if (s.name !== undefined) p.name = String(s.name).trim();
+  if (s.code !== undefined) p.code = s.code || null;
+  if (s.manager !== undefined) p.manager = s.manager || null;
+  if (s.phone !== undefined) p.phone = s.phone || null;
+  if (s.email !== undefined) p.email = s.email || null;
+  if (s.bizNo !== undefined) p.biz_no = s.bizNo || null;
+  if (s.paymentTerms !== undefined) p.payment_terms = s.paymentTerms || null;
+  if (s.vatIncluded !== undefined) p.vat_included = s.vatIncluded;
+  if (s.memo !== undefined) p.memo = s.memo || null;
+  return p;
+};
+
+export const createSupplier = async (supplier: Omit<Supplier, 'id' | 'user_id'>): Promise<Supplier> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('인증이 만료되었습니다.');
+  const { data, error } = await supabase.from('suppliers')
+    .insert({ user_id: user.id, ...supplierPayload(supplier) }).select().single();
+  if (error) {
+    if (String(error.code) === '23505') throw new Error(`이미 등록된 발주처입니다: ${supplier.name}`);
+    throw error;
+  }
+  await logActivity(user.id, 'CREATE_SUPPLIER', `발주처 '${supplier.name}' 등록`);
+  return mapSupplierFromDB(data);
+};
+
+export const updateSupplier = async (id: string, updates: Partial<Supplier>): Promise<Supplier> => {
+  const { data, error } = await supabase.from('suppliers')
+    .update(supplierPayload(updates)).eq('id', id).select().single();
+  if (error) {
+    if (String(error.code) === '23505') throw new Error(`이미 등록된 발주처 이름입니다.`);
+    throw error;
+  }
+  return mapSupplierFromDB(data);
+};
+
+export const deleteSupplier = async (id: string): Promise<void> => {
+  const { count } = await supabase.from('products')
+    .select('*', { count: 'exact', head: true }).eq('supplier_id', id);
+  if ((count || 0) > 0) {
+    throw new Error(`이 발주처에 연결된 제품이 ${count}개 있습니다. 제품의 발주처를 먼저 변경해주세요.`);
+  }
+  const { error } = await supabase.from('suppliers').delete().eq('id', id);
+  if (error) throw error;
+};
+
+/**
+ * 기존 제품들의 발주처명(자유 텍스트)을 읽어 발주처 마스터로 옮기고 연결한다.
+ * 이미 등록된 이름은 건너뛰므로 여러 번 실행해도 안전하다.
+ */
+export const migrateSuppliersFromProducts = async (): Promise<{ created: number; linked: number }> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('인증이 만료되었습니다.');
+
+  const products = await fetchProducts();
+  const existing = await fetchSuppliers();
+  const byName = new Map(existing.map(s => [s.name.trim(), s]));
+
+  const names = Array.from(new Set(
+    products.map(p => String(p.supplierName || '').trim()).filter(Boolean),
+  ));
+  const toCreate = names.filter(n => !byName.has(n));
+
+  if (toCreate.length > 0) {
+    const { data, error } = await supabase.from('suppliers')
+      .insert(toCreate.map(name => ({ user_id: user.id, name, vat_included: true })))
+      .select();
+    if (error) throw error;
+    (data || []).map(mapSupplierFromDB).forEach(s => byName.set(s.name.trim(), s));
+  }
+
+  let linked = 0;
+  for (const p of products) {
+    const target = byName.get(String(p.supplierName || '').trim());
+    if (target && p.supplierId !== target.id) {
+      const { error } = await supabase.from('products').update({ supplier_id: target.id }).eq('id', p.id);
+      if (!error) linked++;
+    }
+  }
+  await logActivity(user.id, 'MIGRATE_SUPPLIERS', `발주처 ${toCreate.length}곳 생성, 제품 ${linked}건 연결`);
+  return { created: toCreate.length, linked };
+};
 
 const mapTemplateFromDB = (data: any): InvoiceTemplate => ({
   id: data.id,
@@ -182,23 +331,32 @@ export const fetchProducts = async (): Promise<Product[]> => {
   return [];
 };
 // Fix errors by correctly mapping product properties from camelCase to snake_case for Supabase insert
+/** 새 컬럼(supplier_id, vat_type)은 마이그레이션이 적용된 경우에만 payload에 포함한다. */
+const productPayload = (p: Partial<Product>, schema: SchemaSupport) => {
+  const payload: any = {
+    sku: p.sku,
+    name: p.name,
+    additional_name: p.additionalName,
+    use_additional_name: p.useAdditionalName,
+    supplier_name: p.supplierName,
+    template_id: p.templateId,
+    purchase_cost: p.purchaseCost || 0,
+    sales_price: p.salesPrice || 0,
+    shipping_cost: p.shippingCost || 0,
+    other_cost: p.otherCost || 0,
+    market_fee_rate: p.marketFeeRate || 0,
+  };
+  if (schema.suppliers) payload.supplier_id = p.supplierId || null;
+  if (schema.productVat) payload.vat_type = p.vatType || 'taxable';
+  return payload;
+};
+
 export const createProduct = async (product: Omit<Product, 'id' | 'user_id'>): Promise<Product> => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('인증이 만료되었습니다.');
-  const { data, error } = await supabase.from('products').insert({ 
-    user_id: user.id, 
-    sku: product.sku, 
-    name: product.name, 
-    additional_name: product.additionalName, 
-    use_additional_name: product.useAdditionalName, 
-    supplier_name: product.supplierName, 
-    template_id: product.templateId,
-    purchase_cost: product.purchaseCost,
-    sales_price: product.salesPrice,
-    shipping_cost: product.shippingCost,
-    other_cost: product.otherCost,
-    market_fee_rate: product.marketFeeRate
-  }).select().single();
+  const schema = await getSchemaSupport();
+  const { data, error } = await supabase.from('products')
+    .insert({ user_id: user.id, ...productPayload(product, schema) }).select().single();
   if (error) throw error;
   await logActivity(user.id, 'CREATE_PRODUCT', `제품 '${product.sku}' 등록`);
   return mapProductFromDB(data);
@@ -207,20 +365,8 @@ export const createProduct = async (product: Omit<Product, 'id' | 'user_id'>): P
 export const createProductsBulk = async (products: Omit<Product, 'id' | 'user_id'>[]) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
-    const payload = products.map(p => ({ 
-      user_id: user.id, 
-      sku: p.sku, 
-      name: p.name, 
-      additional_name: p.additionalName, 
-      use_additional_name: p.useAdditionalName, 
-      supplier_name: p.supplierName, 
-      template_id: p.templateId,
-      purchase_cost: p.purchaseCost || 0,
-      sales_price: p.salesPrice || 0,
-      shipping_cost: p.shippingCost || 0,
-      other_cost: p.otherCost || 0,
-      market_fee_rate: p.marketFeeRate || 0
-    }));
+    const schema = await getSchemaSupport();
+    const payload = products.map(p => ({ user_id: user.id, ...productPayload(p, schema) }));
     const { error } = await supabase.from('products').insert(payload);
     if (error) throw error;
     await logActivity(user.id, 'CREATE_PRODUCT_BULK', `${products.length}개의 제품 대량 등록`);
@@ -238,6 +384,9 @@ export const updateProduct = async (id: string, product: Partial<Product>): Prom
     if (product.shippingCost !== undefined) updates.shipping_cost = product.shippingCost;
     if (product.otherCost !== undefined) updates.other_cost = product.otherCost;
     if (product.marketFeeRate !== undefined) updates.market_fee_rate = product.marketFeeRate;
+    const schema = await getSchemaSupport();
+    if (schema.suppliers && product.supplierId !== undefined) updates.supplier_id = product.supplierId || null;
+    if (schema.productVat && product.vatType !== undefined) updates.vat_type = product.vatType;
     const { data, error } = await supabase.from('products').update(updates).eq('id', id).select().single();
     if (error) throw error;
     return mapProductFromDB(data);
@@ -310,7 +459,15 @@ export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'create
     }
 
     if (newRecords.length > 0) {
-        const { error } = await supabase.from('sales_records').insert(newRecords);
+        // 마이그레이션 전이라면 부가세/발주처 컬럼을 제거하고 저장한다.
+        const schema = await getSchemaSupport();
+        const rows = newRecords.map(r => {
+            const row: any = { ...r };
+            if (!schema.salesVat) { delete row.total_supply_amount; delete row.total_vat_amount; }
+            if (!schema.suppliers) delete row.supplier_id;
+            return row;
+        });
+        const { error } = await supabase.from('sales_records').insert(rows);
         if (error) throw error;
         await logActivity(user.id, 'SAVE_SALES', `${newRecords.length}건의 매출 기록 저장 (중복 ${skipped.length}건 제외)`);
     }
