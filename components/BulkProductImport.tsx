@@ -14,13 +14,15 @@ import { Product, InvoiceTemplate, Supplier, VatType } from '../types';
 
 // ── 붙여넣은 열이 무엇인지 ──────────────────────────────────────────────────
 type FieldKey =
-  | 'ignore' | 'sku' | 'name' | 'supplier' | 'template' | 'additionalName'
+  | 'ignore' | 'sku' | 'name' | 'supplier' | 'template' | 'additionalName' | 'useAlias'
   | 'purchaseCost' | 'salesPrice' | 'shippingCost' | 'otherCost' | 'marketFeeRate' | 'vatType';
 
 const FIELD_LABELS: { key: FieldKey; label: string }[] = [
   { key: 'ignore',         label: '무시' },
   { key: 'sku',            label: 'SKU' },
   { key: 'name',           label: '제품명' },
+  { key: 'additionalName', label: '별칭' },
+  { key: 'useAlias',       label: '별칭사용' },
   { key: 'supplier',       label: '발주처' },
   { key: 'template',       label: '송장양식' },
   { key: 'purchaseCost',   label: '매입가' },
@@ -29,13 +31,14 @@ const FIELD_LABELS: { key: FieldKey; label: string }[] = [
   { key: 'otherCost',      label: '기타비용' },
   { key: 'marketFeeRate',  label: '수수료율' },
   { key: 'vatType',        label: '과세구분' },
-  { key: 'additionalName', label: '대체제품명' },
 ];
 
 // 헤더 자동 인식용. 부분 일치라서 'SKU(필수)', '매입단가' 같은 것도 잡힌다.
+// 더 좁은 이름을 먼저 둔다 ('대체제품명사용' 이 '대체제품명' 으로 먼저 잡히면 안 된다)
 const ALIASES: { key: FieldKey; words: string[] }[] = [
   { key: 'sku',            words: ['sku', '코드', '품번', '자체상품'] },
-  { key: 'additionalName', words: ['대체제품', '추가제품', '대체상품'] },
+  { key: 'useAlias',       words: ['별칭사용', '대체제품명사용', '별칭 사용', '대체명사용'] },
+  { key: 'additionalName', words: ['별칭', '대체제품', '추가제품', '대체상품', '대체명'] },
   { key: 'name',           words: ['제품명', '상품명', '품명', '품목명', 'name'] },
   { key: 'supplier',       words: ['발주처', '공급처', '거래처', '공급사', '매입처', '업체'] },
   { key: 'template',       words: ['양식', 'template'] },
@@ -66,7 +69,8 @@ interface DraftRow {
   name: string;
   supplier: string;
   templateId: string;
-  additionalName: string;
+  additionalName: string;   // 별칭 — 발주처 송장에 이 이름으로 찍는다
+  useAlias: boolean;
   purchaseCost: string;
   salesPrice: string;
   shippingCost: string;
@@ -76,10 +80,42 @@ interface DraftRow {
 }
 
 const blankRow = (key: number): DraftRow => ({
-  key, sku: '', name: '', supplier: '', templateId: '', additionalName: '',
+  key, sku: '', name: '', supplier: '', templateId: '', additionalName: '', useAlias: false,
   purchaseCost: '', salesPrice: '', shippingCost: '', otherCost: '', marketFeeRate: '',
   vatType: 'taxable',
 });
+
+const isYes = (v: string) => ['y', 'yes', '1', 'o', 'true', 'ㅇ', '사용', '예'].includes(v.trim().toLowerCase());
+
+/** 붙여넣은 칸 하나를 해당 필드에 넣는다. 붙여넣기와 열 재지정 양쪽에서 같은 규칙을 쓴다. */
+const applyCell = (r: DraftRow, field: FieldKey, v: string, templateByName: Map<string, string>) => {
+  switch (field) {
+    case 'sku': r.sku = v; break;
+    case 'name': r.name = v; break;
+    case 'supplier': r.supplier = v; break;
+    case 'additionalName': r.additionalName = v; r.useAlias = true; break;
+    case 'useAlias': r.useAlias = isYes(v); break;
+    case 'template': r.templateId = templateByName.get(v.toLowerCase()) ?? ''; break;
+    case 'purchaseCost': r.purchaseCost = v; break;
+    case 'salesPrice': r.salesPrice = v; break;
+    case 'shippingCost': r.shippingCost = v; break;
+    case 'otherCost': r.otherCost = v; break;
+    case 'marketFeeRate': r.marketFeeRate = v; break;
+    case 'vatType': r.vatType = /면세|면|exempt/i.test(v) ? 'exempt' : 'taxable'; break;
+  }
+};
+
+const buildRows = (body: string[][], cols: FieldKey[], templateByName: Map<string, string>, startKey: number): DraftRow[] =>
+  body.map((cells, n) => {
+    const r = blankRow(startKey + n);
+    cols.forEach((field, i) => {
+      const v = (cells[i] ?? '').trim();
+      // 별칭사용 열은 값이 비어도 'N' 으로 해석해야 하므로 예외
+      if (field === 'ignore' || (!v && field !== 'useAlias')) return;
+      applyCell(r, field, v, templateByName);
+    });
+    return r;
+  });
 
 const toNumber = (v: string): number => {
   const n = parseFloat(String(v).replace(/[^0-9.-]/g, ''));
@@ -136,27 +172,8 @@ export const BulkProductImport: React.FC<Props> = ({
     }
 
     const body = isHeader ? grid.slice(1) : grid;
-    const next = body.map(cells => {
-      const r = blankRow(nextKey.current++);
-      cols.forEach((field, i) => {
-        const v = (cells[i] ?? '').trim();
-        if (!v || field === 'ignore') return;
-        switch (field) {
-          case 'sku': r.sku = v; break;
-          case 'name': r.name = v; break;
-          case 'supplier': r.supplier = v; break;
-          case 'additionalName': r.additionalName = v; break;
-          case 'template': r.templateId = templateByName.get(v.toLowerCase()) ?? ''; break;
-          case 'purchaseCost': r.purchaseCost = v; break;
-          case 'salesPrice': r.salesPrice = v; break;
-          case 'shippingCost': r.shippingCost = v; break;
-          case 'otherCost': r.otherCost = v; break;
-          case 'marketFeeRate': r.marketFeeRate = v; break;
-          case 'vatType': r.vatType = /면세|면|exempt/i.test(v) ? 'exempt' : 'taxable'; break;
-        }
-      });
-      return r;
-    });
+    const next = buildRows(body, cols, templateByName, nextKey.current);
+    nextKey.current += next.length;
 
     setColumns(cols);
     setRows(next);
@@ -176,27 +193,9 @@ export const BulkProductImport: React.FC<Props> = ({
     const guessed = rawGrid[0].map(guessField);
     const isHeader = guessed.filter(g => g !== 'ignore').length >= 2;
     const body = isHeader ? rawGrid.slice(1) : rawGrid;
-    setRows(body.map(cells => {
-      const r = blankRow(nextKey.current++);
-      cols.forEach((f, i) => {
-        const v = (cells[i] ?? '').trim();
-        if (!v || f === 'ignore') return;
-        switch (f) {
-          case 'sku': r.sku = v; break;
-          case 'name': r.name = v; break;
-          case 'supplier': r.supplier = v; break;
-          case 'additionalName': r.additionalName = v; break;
-          case 'template': r.templateId = templateByName.get(v.toLowerCase()) ?? ''; break;
-          case 'purchaseCost': r.purchaseCost = v; break;
-          case 'salesPrice': r.salesPrice = v; break;
-          case 'shippingCost': r.shippingCost = v; break;
-          case 'otherCost': r.otherCost = v; break;
-          case 'marketFeeRate': r.marketFeeRate = v; break;
-          case 'vatType': r.vatType = /면세|면|exempt/i.test(v) ? 'exempt' : 'taxable'; break;
-        }
-      });
-      return r;
-    }));
+    const next = buildRows(body, cols, templateByName, nextKey.current);
+    nextKey.current += next.length;
+    setRows(next);
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -240,7 +239,8 @@ export const BulkProductImport: React.FC<Props> = ({
   const downloadSample = () => {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet([{
-      'SKU': 'A-001', '제품명': '양파 10kg', '발주처': suppliers[0]?.name || '한일식품',
+      'SKU': 'A-001', '제품명': '양파 10kg', '별칭': '햇양파 10kg(대)', '별칭사용': 'Y',
+      '발주처': suppliers[0]?.name || '한일식품',
       '송장양식': templates[0]?.name || '기본양식', '매입가': 12000, '판매가': 19000,
       '배송비': 3000, '기타비용': 0, '수수료율': 10, '과세구분': '과세',
     }]);
@@ -293,7 +293,7 @@ export const BulkProductImport: React.FC<Props> = ({
         supplierId: matched?.id,
         templateId: r.templateId,
         additionalName: r.additionalName.trim() || undefined,
-        useAdditionalName: !!r.additionalName.trim(),
+        useAdditionalName: r.useAlias && !!r.additionalName.trim(),
         purchaseCost: toNumber(r.purchaseCost),
         salesPrice: toNumber(r.salesPrice),
         shippingCost: toNumber(r.shippingCost),
@@ -423,6 +423,8 @@ export const BulkProductImport: React.FC<Props> = ({
                     <th className="px-2 py-2 w-8"></th>
                     <th className="px-2 py-2 min-w-[110px]">SKU</th>
                     <th className="px-2 py-2 min-w-[150px]">제품명</th>
+                    <th className="px-2 py-2 min-w-[150px]">별칭 <span className="font-normal text-slate-400">(송장에 찍힐 이름)</span></th>
+                    <th className="px-2 py-2 w-12 text-center">사용</th>
                     <th className="px-2 py-2 min-w-[130px]">발주처</th>
                     <th className="px-2 py-2 min-w-[130px]">송장양식</th>
                     <th className="px-2 py-2 min-w-[90px] text-right">매입가</th>
@@ -446,6 +448,15 @@ export const BulkProductImport: React.FC<Props> = ({
                         </td>
                         <td className="px-1"><input className={cell} value={r.sku} onChange={e => update(i, { sku: e.target.value })} /></td>
                         <td className="px-1"><input className={cell} value={r.name} onChange={e => update(i, { name: e.target.value })} /></td>
+                        <td className="px-1">
+                          <input className={cell} value={r.additionalName} placeholder="없으면 비워두세요"
+                            onChange={e => update(i, { additionalName: e.target.value, useAlias: e.target.value.trim() ? true : r.useAlias })} />
+                        </td>
+                        <td className="px-1 text-center">
+                          <input type="checkbox" checked={r.useAlias} disabled={!r.additionalName.trim()}
+                            onChange={e => update(i, { useAlias: e.target.checked })}
+                            className="rounded border-slate-300 disabled:opacity-30" />
+                        </td>
                         <td className="px-1">
                           {useSupplierMaster ? (
                             <select className={cell} value={r.supplier} onChange={e => update(i, { supplier: e.target.value })}>

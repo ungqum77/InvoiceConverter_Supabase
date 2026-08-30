@@ -91,6 +91,7 @@ export const ProductManagement: React.FC = () => {
   const [supplierForm, setSupplierForm] = useState<Omit<Supplier, 'id' | 'user_id'>>(blankSupplier);
 
   const templateFileRef = useRef<HTMLInputElement>(null);
+  const [isTemplateUploading, setIsTemplateUploading] = useState(false);
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -301,44 +302,72 @@ export const ProductManagement: React.FC = () => {
     }
   };
 
-  const handleTemplateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const readAsBinary = (file: File) => new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (evt) => {
-      const result = evt.target?.result;
-      if (typeof result !== 'string') return;
-      const workbook = XLSX.read(result, { type: 'binary' });
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) return;
-      const sheet = workbook.Sheets[String(firstSheetName)];
-      const data = XLSX.utils.sheet_to_json(sheet as any, { header: 1 }) as any[][];
-      
-      if (data.length > 0) { 
-          const inputHeaders = data[0].map(h => String(h));
-          let outputHeaders = inputHeaders;
-          if (data.length > 1 && data[1].length > 0) {
-              outputHeaders = data[1].map(h => h ? String(h) : '');
-          }
-          const name = file.name.replace(/\.[^/.]+$/, "").trim();
-
-          // [중복 체크] 송장 양식 이름 중복 확인
-          if (templates.some(t => t.name === name)) {
-              alert(`이미 존재하는 송장 양식 이름입니다: ${name}\n파일명을 변경하거나 기존 양식을 삭제 후 다시 시도해주세요.`);
-              e.target.value = ''; // Reset input
-              return;
-          }
-
-          createTemplate({ name, headers: inputHeaders, outputHeaders })
-            .then(() => {
-                alert(`양식 등록 완료!`);
-                loadData();
-            })
-            .catch((err: any) => alert(err?.message || "양식 생성 중 오류"));
-      }
+    reader.onload = evt => {
+      const r = evt.target?.result;
+      typeof r === 'string' ? resolve(r) : reject(new Error('파일을 읽지 못했습니다.'));
     };
+    reader.onerror = () => reject(new Error('파일을 읽지 못했습니다.'));
     reader.readAsBinaryString(file);
+  });
+
+  /**
+   * 송장 양식 업로드. 발주처마다 양식이 따로라 한 번에 여러 개를 올리는 일이 잦아
+   * 파일을 여러 개 받는다. 한 파일이 실패해도 나머지는 계속 등록하고, 끝에 한 번만 알린다.
+   */
+  const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
     e.target.value = '';
+    if (files.length === 0) return;
+
+    setIsTemplateUploading(true);
+    const room = currentTier.max_templates - templates.length;   // 등급 한도까지 남은 개수
+    const taken = new Set(templates.map(t => t.name));           // 이번 배치에서 생긴 이름까지 누적
+    const done: string[] = [];
+    const failed: string[] = [];
+
+    for (const file of files) {
+      const name = file.name.replace(/\.[^/.]+$/, '').trim();
+      try {
+        if (done.length >= room) { failed.push(`${name}: 등급 한도(${currentTier.max_templates}개) 초과`); continue; }
+        if (taken.has(name)) { failed.push(`${name}: 이미 있는 양식 이름`); continue; }
+
+        const wb = XLSX.read(await readAsBinary(file), { type: 'binary' });
+        const sheetName = wb.SheetNames[0];
+        if (!sheetName) throw new Error('시트가 없습니다');
+        const data = XLSX.utils.sheet_to_json(wb.Sheets[String(sheetName)] as any, { header: 1 }) as any[][];
+        if (data.length === 0 || !data[0]?.length) throw new Error('1행에 열 제목이 없습니다');
+
+        const inputHeaders = data[0].map(h => String(h ?? ''));
+        const outputHeaders = (data.length > 1 && data[1].length > 0)
+          ? data[1].map(h => (h ? String(h) : ''))
+          : inputHeaders;
+
+        await createTemplate({ name, headers: inputHeaders, outputHeaders });
+        taken.add(name);
+        done.push(`${name} (${inputHeaders.length}개 열)`);
+      } catch (err: any) {
+        failed.push(`${name}: ${err?.message || '등록 실패'}`);
+      }
+    }
+
+    setIsTemplateUploading(false);
+    if (done.length > 0) await loadData();
+
+    const lines: string[] = [];
+    if (done.length > 0) lines.push(`✅ ${done.length}개 등록 완료\n${done.join('\n')}`);
+    if (failed.length > 0) lines.push(`⛔ ${failed.length}개 실패\n${failed.join('\n')}`);
+    alert(lines.join('\n\n'));
+  };
+
+  /** 등록해둔 양식을 다시 엑셀로 받는다. 1행=매칭용 제목, 2행=출력용 제목. */
+  const handleTemplateDownload = (tpl: InvoiceTemplate) => {
+    const rows: string[][] = [tpl.headers.map(h => String(h))];
+    if (tpl.outputHeaders && tpl.outputHeaders.length > 0) rows.push(tpl.outputHeaders.map(h => String(h ?? '')));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), 'Sheet1');
+    XLSX.writeFile(wb, `${tpl.name}.xlsx`);
   };
 
   // 대량 등록 화면에서 검증까지 끝난 데이터만 넘어온다.
@@ -423,9 +452,12 @@ export const ProductManagement: React.FC = () => {
                   <div className="text-center sm:text-left">
                     <h3 className="text-indigo-900 font-bold text-lg mb-1">새 송장 양식 등록</h3>
                     <p className="text-indigo-700 text-sm mb-2">엑셀 파일을 업로드하면 열 제목을 자동으로 인식합니다.</p>
+                    <p className="text-indigo-500 text-xs">파일을 <b>여러 개 한꺼번에</b> 고르셔도 됩니다. 파일 이름이 곧 양식 이름이 됩니다.</p>
                   </div>
-                  <input type="file" accept=".xlsx, .xls" ref={templateFileRef} className="hidden" onChange={handleTemplateUpload}/>
-                  <Button onClick={() => templateFileRef.current?.click()} icon={<Upload size={18} />}>엑셀 업로드</Button>
+                  <input type="file" accept=".xlsx, .xls" multiple ref={templateFileRef} className="hidden" onChange={handleTemplateUpload}/>
+                  <Button onClick={() => templateFileRef.current?.click()} disabled={isTemplateUploading} icon={<Upload size={18} />}>
+                    {isTemplateUploading ? '등록 중…' : '엑셀 업로드'}
+                  </Button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {templates.map(tpl => (
@@ -435,7 +467,12 @@ export const ProductManagement: React.FC = () => {
                           <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center text-green-600"><FileSpreadsheet size={20} /></div>
                           <div><h4 className="font-bold text-slate-900">{tpl.name}</h4><p className="text-[10px] text-slate-500">{tpl.headers.length}개 열</p></div>
                         </div>
-                        <button onClick={() => handleTemplateDelete(tpl.id)} className="text-slate-400 hover:text-red-500"><Trash2 size={16} /></button>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => handleTemplateDownload(tpl)} title="이 양식을 엑셀로 내려받기"
+                            className="text-slate-400 hover:text-primary p-1"><Download size={16} /></button>
+                          <button onClick={() => handleTemplateDelete(tpl.id)} title="삭제"
+                            className="text-slate-400 hover:text-red-500 p-1"><Trash2 size={16} /></button>
+                        </div>
                       </div>
                       <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 h-20 overflow-y-auto"><div className="flex flex-wrap gap-1">{tpl.headers.map((h, i) => <span key={i} className="text-[9px] bg-white border px-1.5 rounded text-slate-500">{h}</span>)}</div></div>
                     </div>
