@@ -343,3 +343,11 @@ create policy "content_images_auth_upload" on storage.objects
 -- 테이블 11개와 RLS 상태 점검 (rowsecurity 가 전부 true 여야 정상)
 --   select tablename, rowsecurity from pg_tables
 --    where schemaname = 'public' order by tablename;
+
+-- ── 송장 양식 열별 '다른 이름' (별칭) ──────────────────────────────────────
+-- 주문서마다 열 제목이 달라지는 것을 흡수한다.
+-- headers 와 같은 순서·길이의 배열의 배열.
+-- 예) headers = ["주문번호","수취인명"] 이면
+--     header_aliases = [["오더번호"], ["받는분","수령인"]]
+alter table public.invoice_templates
+  add column if not exists header_aliases jsonb;

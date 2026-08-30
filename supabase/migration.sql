@@ -157,3 +157,11 @@ create policy "activity_logs_insert_own" on public.activity_logs
 --   create unique index if not exists sales_records_dedup_key
 --     on public.sales_records (user_id, order_id, supplier_name, product_name)
 --     where order_id is not null;
+
+-- ── 송장 양식 열별 '다른 이름' (별칭) ──────────────────────────────────────
+-- 주문서마다 열 제목이 달라지는 것을 흡수한다.
+-- headers 와 같은 순서·길이의 배열의 배열.
+-- 예) headers = ["주문번호","수취인명"] 이면
+--     header_aliases = [["오더번호"], ["받는분","수령인"]]
+alter table public.invoice_templates
+  add column if not exists header_aliases jsonb;

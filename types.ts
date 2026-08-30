@@ -73,6 +73,12 @@ export interface InvoiceTemplate {
   name: string;
   headers: string[]; // (Row 1) Input Headers: 주문서 매핑용 헤더
   outputHeaders?: string[]; // (Row 2) Output Headers: 최종 출력용 헤더 (Optional)
+  /**
+   * 열별 '다른 이름'. headers 와 같은 순서·길이.
+   * 주문서마다 열 제목이 달라지는 것을 흡수한다.
+   * 예) headers[1]='수취인명' 이면 headerAliases[1]=['받는분','수령인']
+   */
+  headerAliases?: string[][];
   user_id?: string; // Supabase owner
 }
 

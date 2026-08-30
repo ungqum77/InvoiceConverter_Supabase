@@ -1,11 +1,12 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckCircle2, User, Users, Tag, Loader2, Lock, Youtube, X, ExternalLink, Search, ListFilter, TestTube, DollarSign, Calendar, FolderInput, HardDrive, FolderTree, ChevronRight, Check, FolderOpen } from 'lucide-react';
 import { Button } from '../components/Button';
-import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords, deleteOldestSalesRecords, SalesSaveResult, fetchSuppliers } from '../services/dbService';
-import { InvoiceRow, MatchedOrder, Product, ColumnMapping, SalesRecord, Supplier } from '../types';
+import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords, deleteOldestSalesRecords, SalesSaveResult, fetchSuppliers, updateTemplate, getSchemaSupport } from '../services/dbService';
+import { InvoiceRow, MatchedOrder, Product, ColumnMapping, SalesRecord, Supplier, InvoiceTemplate } from '../types';
+import { resolveHeaders, needsReview, toLookup, KIND_LABEL, HeaderResolution } from '../services/headerMatch';
 import { calcProductProfit, AmountBreakdown, emptyBreakdown } from '../services/calc';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -96,6 +97,13 @@ export const InvoiceConverter: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [saveToCrm, setSaveToCrm] = useState(true);
 
+  // 양식 열 ↔ 주문서 열 연결
+  const [templates, setTemplates] = useState<InvoiceTemplate[]>([]);
+  const [aliasSupported, setAliasSupported] = useState(false);
+  /** 사용자가 직접 고른 연결. { 양식id: { 양식열이름: 주문서열제목 } } */
+  const [manualLinks, setManualLinks] = useState<Record<string, Record<string, string>>>({});
+  const [savingAlias, setSavingAlias] = useState(false);
+
   // Folder Save Success Modal State
   const [savedFolderInfo, setSavedFolderInfo] = useState<{ name: string } | null>(null);
 
@@ -106,6 +114,8 @@ export const InvoiceConverter: React.FC = () => {
           fetchAppSettings().then(setAppSettings);
           fetchProducts().then(setDbProducts);
           fetchSuppliers().then(setSuppliers).catch(() => setSuppliers([]));
+          fetchTemplates().then(setTemplates).catch(() => setTemplates([]));
+          getSchemaSupport().then(sc => setAliasSupported(sc.templateAliases)).catch(() => {});
       }
   }, [user]);
 
@@ -240,9 +250,77 @@ export const InvoiceConverter: React.FC = () => {
     return { name: product.name, source: 'db_name' };
   };
 
+  /** 이번 변환에서 실제로 쓰이는 양식만 추린다 */
+  const usedTemplates = useMemo(() => {
+    const ids = new Set(matchedData.filter(o => o.status === 'matched' && o.product?.templateId)
+      .map(o => o.product!.templateId));
+    return templates.filter(t => ids.has(t.id));
+  }, [matchedData, templates]);
+
+  /** 양식별 열 연결 결과 */
+  const resolutions = useMemo<Record<string, HeaderResolution[]>>(() => {
+    const map: Record<string, HeaderResolution[]> = {};
+    usedTemplates.forEach(t => {
+      map[t.id] = resolveHeaders(t.headers, headers, {
+        aliases: t.headerAliases,
+        manual: manualLinks[t.id],
+      });
+    });
+    return map;
+  }, [usedTemplates, headers, manualLinks]);
+
+  const lookups = useMemo<Record<string, Record<string, string>>>(() => {
+    const map: Record<string, Record<string, string>> = {};
+    usedTemplates.forEach(t => { map[t.id] = toLookup(resolutions[t.id] ?? []); });
+    return map;
+  }, [resolutions, usedTemplates]);
+
+  /** 확인이 필요한 연결이 있는 양식들 */
+  const reviewNeeded = useMemo(
+    () => usedTemplates
+      .map(t => ({ tpl: t, items: (resolutions[t.id] ?? []).filter(needsReview) }))
+      .filter(x => x.items.length > 0),
+    [usedTemplates, resolutions]);
+
+  /** 양식 열 이름으로 주문서 값을 꺼낸다. 연결이 없으면 예전처럼 이름 그대로 시도한다. */
+  const cellValue = (order: MatchedOrder, templateId: string, header: string) => {
+    const src = lookups[templateId]?.[header];
+    if (src === '') return '';
+    return order.originalData[src ?? header] ?? '';
+  };
+
+  /** 화면에서 고른 연결을 양식의 '다른 이름'으로 저장해 다음부터 자동 적용되게 한다 */
+  const saveLinksAsAliases = async () => {
+    setSavingAlias(true);
+    try {
+      let saved = 0;
+      for (const tpl of usedTemplates) {
+        const picks = manualLinks[tpl.id];
+        if (!picks) continue;
+        const aliases = tpl.headers.map((h, i) => {
+          const list = [...(tpl.headerAliases?.[i] ?? [])];
+          const picked = picks[h];
+          if (picked && picked !== h && !list.includes(picked)) list.push(picked);
+          return list;
+        });
+        await updateTemplate(tpl.id, {
+          name: tpl.name, headers: tpl.headers,
+          outputHeaders: tpl.outputHeaders ?? [], headerAliases: aliases,
+        });
+        saved++;
+      }
+      if (saved > 0) {
+        setTemplates(await fetchTemplates());
+        alert('연결을 양식에 저장했습니다. 다음부터는 자동으로 잡힙니다.');
+      }
+    } catch (e: any) {
+      alert('저장 실패: ' + (e?.message || e));
+    } finally { setSavingAlias(false); }
+  };
+
   const getProcessingData = async () => {
-      const templates = await fetchTemplates();
-      const templateMap = new Map(templates.map(t => [t.id, t]));
+      const tplList = templates.length > 0 ? templates : await fetchTemplates();
+      const templateMap = new Map<string, InvoiceTemplate>(tplList.map(t => [t.id, t]));
       const salesRecordsToSave: Omit<SalesRecord, 'id' | 'created_at'>[] = [];
       const fileGroups = new Map<string, { fileName: string; templateId: string; orders: MatchedOrder[]; supplier: string; }>();
 
@@ -322,7 +400,7 @@ export const InvoiceConverter: React.FC = () => {
             if (ord !== rev) finalName += ` 보내는 사람_${ord}`;
             tpl.headers.forEach((h: string) => {
                const isProductCol = (mapping.productName && h === mapping.productName) || PRODUCT_NAME_HEADERS.some(ph => h.includes(ph));
-               rowData.push(isProductCol ? finalName : o.originalData[h] || '');
+               rowData.push(isProductCol ? finalName : cellValue(o, group.templateId, h));
             });
             return rowData;
          });
@@ -385,7 +463,7 @@ export const InvoiceConverter: React.FC = () => {
                   if (ord !== rev) finalName += ` 보내는 사람_${ord}`;
                   tpl.headers.forEach(h => {
                      const isPrd = (mapping.productName && h === mapping.productName) || PRODUCT_NAME_HEADERS.some(ph => h.includes(ph));
-                     rowData.push(isPrd ? finalName : o.originalData[h] || '');
+                     rowData.push(isPrd ? finalName : cellValue(o, group.templateId, h));
                   });
                   return { rowData, order: o };
               });
@@ -552,6 +630,52 @@ export const InvoiceConverter: React.FC = () => {
                     <h3 className="text-lg font-bold">변환 완료</h3>
                     <p className="text-xs text-slate-500">총 {matchedData.filter(d => d.status === 'matched').length}건 변환 성공</p>
                 </div>
+                {reviewNeeded.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
+                    <h4 className="text-sm font-bold text-amber-900 mb-1 flex items-center gap-2">
+                      <AlertCircle size={16} /> 확인이 필요한 열이 있습니다
+                    </h4>
+                    <p className="text-[11px] text-amber-800 leading-relaxed mb-3">
+                      양식의 열 이름과 주문서의 열 제목이 정확히 같지 않습니다. 아래에서 확인하거나 직접 골라주세요.
+                      그냥 두면 <b>추측</b>한 열로 채우고, <b>연결 안 됨</b>은 빈칸으로 나갑니다.
+                    </p>
+                    <div className="space-y-3 max-h-64 overflow-y-auto">
+                      {reviewNeeded.map(({ tpl, items }) => (
+                        <div key={tpl.id} className="bg-white rounded border border-amber-100 p-3">
+                          <div className="text-[11px] font-bold text-slate-700 mb-2">{tpl.name}</div>
+                          <div className="space-y-1.5">
+                            {items.map(r => (
+                              <div key={r.header} className="flex items-center gap-2 text-[11px]">
+                                <span className="w-24 shrink-0 truncate text-slate-600" title={r.header}>{r.header}</span>
+                                <span className="text-slate-300">&rarr;</span>
+                                <select
+                                  className="flex-1 rounded border-slate-300 text-[11px] py-1"
+                                  value={r.orderHeader}
+                                  onChange={e => setManualLinks(prev => ({
+                                    ...prev,
+                                    [tpl.id]: { ...(prev[tpl.id] ?? {}), [r.header]: e.target.value },
+                                  }))}>
+                                  <option value="">연결 안 함 (빈칸)</option>
+                                  {headers.map(h => <option key={h} value={h}>{h}</option>)}
+                                </select>
+                                <span className={r.kind === 'none' ? 'shrink-0 w-20 text-right text-red-500' : 'shrink-0 w-20 text-right text-amber-600'}>
+                                  {KIND_LABEL[r.kind]}{r.kind === 'similar' ? ` ${Math.round(r.score * 100)}%` : ''}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {aliasSupported && Object.keys(manualLinks).length > 0 && (
+                      <button onClick={saveLinksAsAliases} disabled={savingAlias}
+                        className="mt-3 w-full py-2 bg-white border border-amber-300 text-amber-800 rounded-lg text-[11px] font-bold hover:bg-amber-100 disabled:opacity-50">
+                        {savingAlias ? '저장 중…' : '이 연결을 양식에 기억시키기 (다음부터 자동)'}
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 <div className="bg-white rounded-lg border p-4 mb-6 shadow-sm">
                     <h4 className="text-sm font-bold mb-3 flex items-center gap-2"><DollarSign size={16}/> 금일 발주처 정산 요약</h4>
                     <div className="overflow-x-auto max-h-52 overflow-y-auto">

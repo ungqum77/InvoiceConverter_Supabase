@@ -49,6 +49,7 @@ export interface SchemaSupport {
   suppliers: boolean;   // suppliers 테이블 + products.supplier_id
   productVat: boolean;  // products.vat_type
   salesVat: boolean;    // sales_records.total_vat_amount
+  templateAliases: boolean; // invoice_templates.header_aliases
 }
 
 let schemaCache: SchemaSupport | null = null;
@@ -56,7 +57,7 @@ let schemaCache: SchemaSupport | null = null;
 export const getSchemaSupport = async (force = false): Promise<SchemaSupport> => {
   if (schemaCache && !force) return schemaCache;
   if (!supabase) {
-    schemaCache = { suppliers: false, productVat: false, salesVat: false };
+    schemaCache = { suppliers: false, productVat: false, salesVat: false, templateAliases: false };
     return schemaCache;
   }
   const probe = async (table: string, columns: string) => {
@@ -65,12 +66,13 @@ export const getSchemaSupport = async (force = false): Promise<SchemaSupport> =>
       return !error;
     } catch (e) { return false; }
   };
-  const [suppliers, productVat, salesVat] = await Promise.all([
+  const [suppliers, productVat, salesVat, templateAliases] = await Promise.all([
     (async () => (await probe('suppliers', 'id')) && (await probe('products', 'supplier_id')))(),
     probe('products', 'vat_type'),
     probe('sales_records', 'total_vat_amount'),
+    probe('invoice_templates', 'header_aliases'),
   ]);
-  schemaCache = { suppliers, productVat, salesVat };
+  schemaCache = { suppliers, productVat, salesVat, templateAliases };
   return schemaCache;
 };
 
@@ -176,6 +178,7 @@ const mapTemplateFromDB = (data: any): InvoiceTemplate => ({
   name: data.name,
   headers: data.headers,
   outputHeaders: data.output_headers || data.headers, 
+  headerAliases: Array.isArray(data.header_aliases) ? data.header_aliases : undefined,
   user_id: data.user_id,
 });
 
@@ -313,9 +316,24 @@ export const createTemplate = async (template: Omit<InvoiceTemplate, 'id' | 'use
   if (!user) throw new Error('인증이 만료되었습니다.');
   const payload: any = { user_id: user.id, name: template.name, headers: template.headers };
   if (template.outputHeaders && template.outputHeaders.length > 0) { payload.output_headers = template.outputHeaders; }
+  const tplSchema = await getSchemaSupport();
+  if (tplSchema.templateAliases && template.headerAliases) payload.header_aliases = template.headerAliases;
   const { data, error } = await supabase.from('invoice_templates').insert(payload).select().single();
   if (error) throw error;
   await logActivity(user.id, 'CREATE_TEMPLATE', `송장 양식 '${template.name}' 생성`);
+  return mapTemplateFromDB(data);
+};
+export const updateTemplate = async (id: string, template: Omit<InvoiceTemplate, 'id' | 'user_id'>): Promise<InvoiceTemplate> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('인증이 만료되었습니다.');
+  const payload: any = { name: template.name, headers: template.headers };
+  // 출력용 제목을 비워서 저장하면 1행을 그대로 쓰게 된다 (mapTemplateFromDB 참고)
+  payload.output_headers = (template.outputHeaders && template.outputHeaders.length > 0) ? template.outputHeaders : null;
+  const tplSchema = await getSchemaSupport();
+  if (tplSchema.templateAliases) payload.header_aliases = template.headerAliases ?? null;
+  const { data, error } = await supabase.from('invoice_templates').update(payload).eq('id', id).select().single();
+  if (error) throw error;
+  await logActivity(user.id, 'UPDATE_TEMPLATE', `송장 양식 '${template.name}' 수정`);
   return mapTemplateFromDB(data);
 };
 export const deleteTemplate = async (id: string): Promise<void> => {

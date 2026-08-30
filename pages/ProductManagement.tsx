@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { Plus, Trash2, Search, Save, X, FileSpreadsheet, Upload, Settings2, Building2, Tag, CheckSquare, Pencil, Lock, Zap, UserCog, LogOut, AlertOctagon, Calendar, History, Clock, Download, ArrowUpCircle, CreditCard, Award, Youtube, AlertTriangle, RefreshCw, ExternalLink, Sparkles, ChevronRight, FileUp, Check, ArrowDownCircle, DollarSign, PackageCheck } from 'lucide-react';
 import { Product, InvoiceTemplate, UserProfile, ActivityLog, Tier, Supplier, VatType } from '../types';
-import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchTemplates, createTemplate, deleteTemplate, getUserProfile, getUsageStats, createProductsBulk, fetchActivityLogs, fetchAppSettings, AppSettings, trackEvent, fetchSuppliers, createSupplier, updateSupplier, deleteSupplier, migrateSuppliersFromProducts, getSchemaSupport, resetSchemaCache, SchemaSupport } from '../services/dbService';
+import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchTemplates, createTemplate, deleteTemplate, updateTemplate, getUserProfile, getUsageStats, createProductsBulk, fetchActivityLogs, fetchAppSettings, AppSettings, trackEvent, fetchSuppliers, createSupplier, updateSupplier, deleteSupplier, migrateSuppliersFromProducts, getSchemaSupport, resetSchemaCache, SchemaSupport } from '../services/dbService';
 import { calcProfit } from '../services/calc';
 import { supabase } from '../services/supabase';
 import { Button } from '../components/Button';
@@ -11,6 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BulkProductImport } from '../components/BulkProductImport';
 import { SupplierFormModal, SupplierForm, BLANK_SUPPLIER } from '../components/SupplierFormModal';
+import { TemplateEditModal } from '../components/TemplateEditModal';
 
 const YouTubeEmbed = ({ url, title }: { url: string; title: string }) => {
     if (!url) return null;
@@ -92,6 +93,7 @@ export const ProductManagement: React.FC = () => {
 
   const templateFileRef = useRef<HTMLInputElement>(null);
   const [isTemplateUploading, setIsTemplateUploading] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<InvoiceTemplate | null>(null);
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -347,6 +349,13 @@ export const ProductManagement: React.FC = () => {
     alert(lines.join('\n\n'));
   };
 
+  const handleTemplateSave = async (name: string, headers: string[], outputHeaders: string[], headerAliases: string[][]) => {
+    if (!editingTemplate) return;
+    await updateTemplate(editingTemplate.id, { name, headers, outputHeaders, headerAliases });
+    setEditingTemplate(null);
+    await loadData();
+  };
+
   /** 등록해둔 양식을 다시 엑셀로 받는다. 1행=매칭용 제목, 2행=출력용 제목. */
   const handleTemplateDownload = (tpl: InvoiceTemplate) => {
     const rows: string[][] = [tpl.headers.map(h => String(h))];
@@ -454,6 +463,8 @@ export const ProductManagement: React.FC = () => {
                           <div><h4 className="font-bold text-slate-900">{tpl.name}</h4><p className="text-[10px] text-slate-500">{tpl.headers.length}개 열</p></div>
                         </div>
                         <div className="flex items-center gap-1">
+                          <button onClick={() => setEditingTemplate(tpl)} title="열 이름·순서 편집"
+                            className="text-slate-400 hover:text-primary p-1"><Pencil size={16} /></button>
                           <button onClick={() => handleTemplateDownload(tpl)} title="이 양식을 엑셀로 내려받기"
                             className="text-slate-400 hover:text-primary p-1"><Download size={16} /></button>
                           <button onClick={() => handleTemplateDelete(tpl.id)} title="삭제"
@@ -763,6 +774,15 @@ export const ProductManagement: React.FC = () => {
           </div>
         </div>
       )}
+
+      <TemplateEditModal
+        open={!!editingTemplate}
+        template={editingTemplate}
+        takenNames={templates.filter(t => t.id !== editingTemplate?.id).map(t => t.name)}
+        aliasSupported={schema.templateAliases}
+        onClose={() => setEditingTemplate(null)}
+        onSave={handleTemplateSave}
+      />
 
       <SupplierFormModal
         key={editingSupplierId ?? 'new'}
