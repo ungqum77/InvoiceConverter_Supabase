@@ -110,7 +110,9 @@ export const ProductManagement: React.FC = () => {
     setLoading(true);
     try {
       if (user) {
-          const schemaData = await getSchemaSupport();
+          // 마이그레이션 SQL 을 앱 열어둔 채 실행하는 경우가 있다. 캐시된 감지 결과를
+          // 그대로 쓰면 새 컬럼이 있는데도 없는 줄 알고 값을 버린다. 목록을 새로 불러올 때는 다시 확인한다.
+          const schemaData = await getSchemaSupport(true);
           setSchema(schemaData);
           const [prodData, tplData, userData, usageData, logData, settingsData, supData] = await Promise.all([
             fetchProducts(),
@@ -385,6 +387,7 @@ export const ProductManagement: React.FC = () => {
     setIsBulkModalOpen(true);
   };
 
+  const bundleCount = products.filter(p => p.bundleShipping).length;
   const filteredProducts = products.filter(p => p.sku.toLowerCase().includes(searchTerm.toLowerCase()) || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.supplierName.toLowerCase().includes(searchTerm.toLowerCase()));
   const currentTier = profile?.tier || { id: 'free', name: '무료 회원', max_products: 2, max_templates: 1 };
   
@@ -580,9 +583,17 @@ export const ProductManagement: React.FC = () => {
             {/* Products Tab (Financials Added) */}
             {activeTab === 'products' && (
               <>
-                <div className="flex justify-end mb-4 gap-2">
+                <div className="flex items-center justify-between mb-4 gap-2">
+                  <p className="text-[11px] text-slate-500">
+                    제품 {products.length}개 중 <b className={bundleCount > 0 ? 'text-blue-600' : 'text-slate-400'}>묶음배송 가능 {bundleCount}개</b>
+                    {bundleCount === 0 && products.length > 0 && (
+                      <span className="text-amber-600"> — 묶음배송을 쓰시려면 제품을 수정해 켜거나 대량 등록에서 일괄 지정하세요</span>
+                    )}
+                  </p>
+                  <div className="flex gap-2">
                   <Button size="sm" variant="secondary" onClick={handleBulkModalOpen} icon={<FileUp size={16} />}>대량 등록</Button>
                   <Button size="sm" onClick={() => handleOpenProductModal()} icon={<Plus size={16} />}>개별 등록</Button>
+                  </div>
                 </div>
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                   <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex items-center gap-3">
@@ -606,7 +617,13 @@ export const ProductManagement: React.FC = () => {
                         {filteredProducts.map((p) => (
                             <tr key={p.id} className="hover:bg-slate-50">
                               <td className="px-6 py-4 font-mono">{p.sku}</td>
-                              <td className="px-6 py-4 font-medium">{p.name}</td>
+                              <td className="px-6 py-4 font-medium">
+                                {p.name}
+                                {p.bundleShipping && (
+                                  <span className="ml-1.5 px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 text-[10px] font-bold align-middle"
+                                    title="같은 수취인·주소면 송장 한 장으로 묶습니다">묶음</span>
+                                )}
+                              </td>
                               <td className="px-6 py-4">{p.supplierName}</td>
                               <td className="px-6 py-4 text-right font-mono text-slate-500">{p.purchaseCost?.toLocaleString()}</td>
                               <td className="px-6 py-4 text-right font-mono font-bold">{p.salesPrice?.toLocaleString()}</td>

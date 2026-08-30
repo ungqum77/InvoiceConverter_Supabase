@@ -171,30 +171,38 @@ export const InvoiceConverter: React.FC = () => {
 
         // === 인공지능 기반 컬럼 자동 매칭 로직 ===
         // 유사어 리스트를 기반으로 가장 적합한 컬럼 헤더를 자동으로 찾아냅니다.
+        /**
+         * 주문서 열 중에서 원하는 항목을 찾는다.
+         * 동의어 목록의 앞쪽을 우선한다 — 주문서 열 순서를 우선하면
+         * '상품발주번호' 대신 앞에 있는 '주문번호' 가 잡혀 버린다.
+         */
         const findMatch = (hdrs: string[], synonyms: string[]) => {
-            const clean = (s: string) => String(s).replace(/[\s_]+/g, '').toLowerCase();
+            const clean = (s: string) => String(s).replace(/[s_]+/g, '').toLowerCase();
             const synClean = synonyms.map(clean);
-            // 1. 정확히 일치하는 단어가 있는지 우선 확인
-            for (const h of hdrs) {
-                if (synClean.includes(clean(h))) return h;
+            // 1. 정확히 일치
+            for (const syn of synClean) {
+                const hit = hdrs.find(h => clean(h) === syn);
+                if (hit) return hit;
             }
-            // 2. 부분적으로 포함되어 있는지 확인 (ex. "옵션id(필수)" -> "옵션id" 포함)
-            for (const h of hdrs) {
-                const cleanH = clean(h);
-                if (synClean.some(s => cleanH.includes(s) || s.includes(cleanH))) return h;
+            // 2. 부분 포함 (ex. "옵션id(필수)" -> "옵션id" 포함)
+            for (const syn of synClean) {
+                const hit = hdrs.find(h => { const c = clean(h); return c.includes(syn) || syn.includes(c); });
+                if (hit) return hit;
             }
             return '';
         };
 
         setMapping({
-            sku: findMatch(uniqueHeaders, ['옵션id', '옵션번호', 'sku', '상품코드', '옵션코드', '품목코드', '아이디']),
+            sku: findMatch(uniqueHeaders, ['옵션id', '옵션번호', 'sku', '상품번호', '상품코드', '옵션코드', '품목코드', '자체상품코드', '판매자상품코드', '외부상품코드', '상품id', '아이디']),
             productName: findMatch(uniqueHeaders, ['등록상품명', '상품명', '제품명', '등록제품명', '옵션명', '품목명', '물품명', 'productname', 'itemname']),
             orderer: findMatch(uniqueHeaders, ['주문자', '구매자', '주문자명', '구매자명', '주문자이름', '구매자이름', '주문하시는분', '주문인']),
             receiver: findMatch(uniqueHeaders, ['수취인', '받는사람', '수취인명', '수취인성명', '수취인이름', '받으시는분', '수령인', '수령자']),
-            orderId: findMatch(uniqueHeaders, ['상품주문번호', '주문번호', '상품오더번호', '오더번호', '결제번호', 'orderno', '주문번호(선택)']),
+            // 한 주문번호로 여러 명에게 보내는 주문(선물)이 흔하다.
+            // 중복 판정에 쓰이므로 '행마다 고유한' 번호를 먼저 고른다.
+            orderId: findMatch(uniqueHeaders, ['상품발주번호', '상품주문번호', '발주번호', '주문상세번호', '주문번호', '상품오더번호', '오더번호', '결제번호', 'orderno']),
             quantity: findMatch(uniqueHeaders, ['수량', '구매수', '구매수량', '구매량', '주문수량', 'qty', 'quantity', '주문건수']),
             option: findMatch(uniqueHeaders, ['옵션정보', '선택옵션', '상품옵션', '옵션', '옵션명', '옵션내용']),
-            address: findMatch(uniqueHeaders, ['수취인주소', '배송지주소', '수령인주소', '배송주소', '주소', '배송지', 'address'])
+            address: findMatch(uniqueHeaders, ['수령자주소', '수취인주소', '배송지주소', '수령인주소', '배송주소', '주소', '배송지', 'address'])
         });
 
         setHeaders(uniqueHeaders);
@@ -246,6 +254,36 @@ export const InvoiceConverter: React.FC = () => {
         setStep(3);
     } catch (e) { alert("처리 오류"); } finally { setIsProcessing(false); }
   };
+
+  /**
+   * 매칭 실패 진단.
+   * 지금까지는 한 건도 안 맞아도 '총 0건 변환 성공'만 뜨고 이유를 알 수 없었다.
+   * 주문서에 있는데 제품으로 등록되지 않은 SKU 를 모아 화면에 보여준다.
+   */
+  const unmatchedInfo = useMemo(() => {
+    const rows = matchedData.filter(o => o.status === 'unmatched');
+    const bySku = new Map<string, number>();
+    rows.forEach(o => {
+      const raw = String(o.originalData[mapping.sku] ?? '').trim();
+      const key = raw || '(SKU 칸이 비어 있음)';
+      bySku.set(key, (bySku.get(key) ?? 0) + 1);
+    });
+    return {
+      count: rows.length,
+      skus: Array.from(bySku.entries()).sort((a, b) => b[1] - a[1]),
+    };
+  }, [matchedData, mapping.sku]);
+
+  /** 제품은 찾았지만 송장 양식이 지정되지 않아 파일이 안 만들어지는 경우 */
+  const noTemplateProducts = useMemo(() => {
+    const names = new Set<string>();
+    matchedData.forEach(o => {
+      if (o.status === 'matched' && o.product && !o.product.templateId) {
+        names.add(`${o.product.name} (${o.product.sku})`);
+      }
+    });
+    return Array.from(names);
+  }, [matchedData]);
 
   const getResolvedProductName = (order: MatchedOrder) => {
     if (order.status !== 'matched' || !order.product) return { name: '', source: 'none' };
@@ -427,6 +465,52 @@ export const InvoiceConverter: React.FC = () => {
     return rows;
   };
 
+  /**
+   * 묶음배송 내역 로그.
+   * 어떤 발주처의 어떤 주문들이 한 장으로 합쳐졌는지, 원본 행까지 남긴다.
+   * 발주처에 나가는 파일은 건드리지 않고 정산요약 파일에 시트로 붙인다.
+   */
+  const bundleLogRows = (
+    group: { supplier: string; templateId: string; orders: MatchedOrder[] },
+    tpl: InvoiceTemplate,
+    built: { rowData: any[]; orders: MatchedOrder[] }[],
+    startNo: number,
+  ) => {
+    const out: Record<string, any>[] = [];
+    let no = startNo;
+    const cell = (o: MatchedOrder, key: string) => String(o.originalData[key] ?? '').trim();
+
+    built.forEach(r => {
+      if (r.orders.length < 2) return;   // 합쳐진 것만 남긴다
+      no++;
+      const head = r.orders[0];
+      const productColIndex = tpl.headers.findIndex(h =>
+        (mapping.productName && h === mapping.productName) || PRODUCT_NAME_HEADERS.some(ph => h.includes(ph)));
+      const mergedName = productColIndex >= 0 ? String(r.rowData[productColIndex] ?? '') : '';
+
+      r.orders.forEach((o, i) => {
+        out.push({
+          '묶음번호': no,
+          '합친건수': r.orders.length,
+          '순번': i + 1,
+          '발주처': group.supplier,
+          '송장양식': tpl.name,
+          '수취인': cell(head, mapping.receiver),
+          '주소': cell(head, mapping.address),
+          '송장에찍힌품목': i === 0 ? mergedName : '',
+          'SKU': o.product?.sku ?? '',
+          '제품명': getResolvedProductName(o).name,
+          '수량': o.quantity,
+          '주문번호': mapping.orderId ? cell(o, mapping.orderId) : '',
+          '주문자': cell(o, mapping.orderer),
+          '원본수취인': cell(o, mapping.receiver),
+          '원본주소': cell(o, mapping.address),
+        });
+      });
+    });
+    return { rows: out, nextNo: no };
+  };
+
   const getProcessingData = async () => {
       const tplList = templates.length > 0 ? templates : await fetchTemplates();
       const templateMap = new Map<string, InvoiceTemplate>(tplList.map(t => [t.id, t]));
@@ -479,6 +563,9 @@ export const InvoiceConverter: React.FC = () => {
                   }
                   return;
               }
+              if (result.success && (result.mergedCount ?? 0) > 0) {
+                  console.info(`[CRM] 주문번호가 겹쳐 ${result.mergedCount}건이 합쳐졌습니다.`);
+              }
               if (result.success && result.skippedCount > 0) {
                   const preview = result.skippedItems.slice(0, 3).map((i: any) => `[${i.product_name}] 주문번호:${i.order_id}`).join('\n');
                   alert(`[CRM 저장 결과]\n✅ 저장 성공: ${result.savedCount}건\n⚠️ 중복 제외: ${result.skippedCount}건\n\n[중복 제외 항목 예시]\n${preview}\n\n* 주문번호, 발주처, 제품명이 동일한 주문입니다.`);
@@ -495,11 +582,17 @@ export const InvoiceConverter: React.FC = () => {
       const now = new Date();
       const datePath = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}_${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][now.getDay()]}`;
 
+      const bundleLog: Record<string, any>[] = [];
+      let bundleNo = 0;
+
       fileGroups.forEach(group => {
          const tpl = templateMap.get(group.templateId);
          if (!tpl) return;
          const finalHeaders = (tpl.outputHeaders && tpl.outputHeaders.length > 0) ? tpl.outputHeaders : tpl.headers;
-         const dataRows = buildGroupRows(group, tpl).map(r => r.rowData);
+         const built = buildGroupRows(group, tpl);
+         const log = bundleLogRows(group, tpl, built, bundleNo);
+         bundleLog.push(...log.rows); bundleNo = log.nextNo;
+         const dataRows = built.map(r => r.rowData);
          const wb = XLSX.utils.book_new();
          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([finalHeaders, ...dataRows]), "Sheet1");
          zip.file(`${datePath}/${group.supplier}/${group.fileName}.xlsx`, XLSX.write(wb, { bookType: 'xlsx', type: 'array' }));
@@ -507,6 +600,14 @@ export const InvoiceConverter: React.FC = () => {
 
       const summaryWb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(summaryWb, XLSX.utils.json_to_sheet(summaryRows(financialSummary)), "정산요약");
+      // 합쳐진 건이 있을 때만 붙인다. 없으면 빈 시트가 생겨 헷갈린다.
+      if (bundleLog.length > 0) {
+        const logWs = XLSX.utils.json_to_sheet(bundleLog);
+        logWs['!cols'] = [{ wch: 8 }, { wch: 8 }, { wch: 6 }, { wch: 16 }, { wch: 14 }, { wch: 12 },
+                          { wch: 34 }, { wch: 30 }, { wch: 16 }, { wch: 22 }, { wch: 6 },
+                          { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }];
+        XLSX.utils.book_append_sheet(summaryWb, logWs, "묶음내역");
+      }
       zip.file(`${datePath}/00_정산요약_${now.getDate()}.xlsx`, XLSX.write(summaryWb, { bookType: 'xlsx', type: 'array' }));
 
       await saveCrmDataOnly(salesRecordsToSave);
@@ -539,6 +640,9 @@ export const InvoiceConverter: React.FC = () => {
               } catch (e) { return null; }
           };
 
+          const folderBundleLog: Record<string, any>[] = [];
+          let folderBundleNo = 0;
+
           for (const [, group] of fileGroups) {
               const tpl = templateMap.get(group.templateId);
               if (!tpl) continue;
@@ -550,6 +654,10 @@ export const InvoiceConverter: React.FC = () => {
               // rowData 는 tpl.headers 순서로 만들어지고, 파일에 기록되는 헤더 줄은 finalHeaders 다.
               // 두 배열은 같은 길이의 평행 배열이므로 i번째 값의 '출력 컬럼명'은 finalHeaders[i] 다.
               const newRows = buildGroupRows(group, tpl);
+              {
+                const bl = bundleLogRows(group, tpl, newRows, folderBundleNo);
+                folderBundleLog.push(...bl.rows); folderBundleNo = bl.nextNo;
+              }
 
               // [수정] 예전에는 기존 파일의 컬럼 인덱스를 새 행에 그대로 적용해서
               // 양식이 바뀌면 엉뚱한 컬럼끼리 비교되었다. 이제는 '컬럼 이름'으로만 비교한다.
@@ -652,6 +760,13 @@ export const InvoiceConverter: React.FC = () => {
 
           const sWb = XLSX.utils.book_new();
           XLSX.utils.book_append_sheet(sWb, XLSX.utils.json_to_sheet(summaryRows(merged)), "정산요약");
+          if (folderBundleLog.length > 0) {
+            const logWs = XLSX.utils.json_to_sheet(folderBundleLog);
+            logWs['!cols'] = [{ wch: 8 }, { wch: 8 }, { wch: 6 }, { wch: 16 }, { wch: 14 }, { wch: 12 },
+                              { wch: 34 }, { wch: 30 }, { wch: 16 }, { wch: 22 }, { wch: 6 },
+                              { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }];
+            XLSX.utils.book_append_sheet(sWb, logWs, "묶음내역");
+          }
           const sfh = await targetDir.getFileHandle(summaryFileName, { create: true });
           const sw = await sfh.createWritable();
           await sw.write(XLSX.write(sWb, { bookType: 'xlsx', type: 'array' }));
@@ -701,7 +816,7 @@ export const InvoiceConverter: React.FC = () => {
                 <div><label className="block text-[11px] font-bold mb-1 text-primary">제품명 열 (필수)</label><select className="w-full rounded border-primary bg-blue-50/50 text-xs py-1.5" value={mapping.productName} onChange={e => setMapping({...mapping, productName: e.target.value})}><option value="">선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1">주문자 열 (필수)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.orderer} onChange={e => setMapping({...mapping, orderer: e.target.value})}><option value="">선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1">수취인 열 (필수)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.receiver} onChange={e => setMapping({...mapping, receiver: e.target.value})}><option value="">선택</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
-                <div><label className="block text-[11px] font-bold mb-1 text-slate-500">주문번호 열 (선택-중복방지)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.orderId} onChange={e => setMapping({...mapping, orderId: e.target.value})}><option value="">안함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+                <div><label className="block text-[11px] font-bold mb-1 text-slate-500" title="한 주문번호로 여러 명에게 보내는 경우가 있습니다. 행마다 다른 번호(상품발주번호 등)를 고르세요">주문번호 열 (선택-중복방지)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.orderId} onChange={e => setMapping({...mapping, orderId: e.target.value})}><option value="">안함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-500">수량 열 (선택)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.quantity} onChange={e => setMapping({...mapping, quantity: e.target.value})}><option value="">1개로 가정</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-500">주소 열 (선택-묶음배송)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.address} onChange={e => setMapping({...mapping, address: e.target.value})}><option value="">안함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-500">옵션 열 (선택)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.option} onChange={e => setMapping({...mapping, option: e.target.value})}><option value="">안함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
@@ -713,10 +828,41 @@ export const InvoiceConverter: React.FC = () => {
           <div className="p-6 space-y-6">
             <div className="bg-slate-50 rounded-xl border p-6 border-slate-200">
                 <div className="flex flex-col items-center text-center mb-6">
-                    <CheckCircle2 size={24} className="text-green-600 mb-2" />
-                    <h3 className="text-lg font-bold">변환 완료</h3>
-                    <p className="text-xs text-slate-500">총 {matchedData.filter(d => d.status === 'matched').length}건 변환 성공</p>
+                    {matchedData.filter(d => d.status === 'matched').length > 0
+                      ? <CheckCircle2 size={24} className="text-green-600 mb-2" />
+                      : <AlertCircle size={24} className="text-red-500 mb-2" />}
+                    <h3 className="text-lg font-bold">{matchedData.filter(d => d.status === 'matched').length > 0 ? '변환 완료' : '변환된 건이 없습니다'}</h3>
+                    <p className="text-xs text-slate-500">총 {matchedData.length}건 중 <b className="text-slate-700">{matchedData.filter(d => d.status === 'matched').length}건</b> 변환 성공{unmatchedInfo.count > 0 && <span className="text-red-500"> · {unmatchedInfo.count}건 실패</span>}</p>
                 </div>
+                {unmatchedInfo.count > 0 && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+                    <h4 className="text-sm font-bold text-red-900 mb-1 flex items-center gap-2">
+                      <AlertCircle size={16} /> 제품으로 등록되지 않은 SKU {unmatchedInfo.skus.length}종 · 주문 {unmatchedInfo.count}건
+                    </h4>
+                    <p className="text-[11px] text-red-800 leading-relaxed mb-3">
+                      주문서의 <b>SKU 열</b>({mapping.sku || '지정 안 됨'})에 있는 값과 같은 SKU 의 제품이 등록되어 있어야 변환됩니다.
+                      아래 값을 <b>제품 관리 → 제품 목록</b>에 등록하거나, 이전 단계에서 SKU 열을 다시 골라주세요.
+                    </p>
+                    <div className="bg-white rounded border border-red-100 p-2 max-h-40 overflow-y-auto">
+                      {unmatchedInfo.skus.slice(0, 30).map(([sku, n]) => (
+                        <div key={sku} className="flex justify-between text-[11px] py-0.5">
+                          <span className="font-mono text-slate-700 truncate">{sku}</span>
+                          <span className="text-slate-400 shrink-0 ml-2">{n}건</span>
+                        </div>
+                      ))}
+                      {unmatchedInfo.skus.length > 30 && (
+                        <div className="text-[10px] text-slate-400 pt-1">…외 {unmatchedInfo.skus.length - 30}종</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {noTemplateProducts.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 text-[11px] text-amber-900">
+                    <b>송장 양식이 지정되지 않은 제품 {noTemplateProducts.length}종</b>이 있어 파일이 만들어지지 않습니다.<br />
+                    {noTemplateProducts.slice(0, 5).join(', ')}{noTemplateProducts.length > 5 ? ' 외' : ''}
+                  </div>
+                )}
+
                 {bundlePreview.orders > 0 && (
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
                     <label className="flex items-start gap-2.5 cursor-pointer">

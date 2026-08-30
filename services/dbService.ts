@@ -308,7 +308,8 @@ export const getUsageStats = async (userId: string) => {
 
 export const fetchTemplates = async (): Promise<InvoiceTemplate[]> => {
   if (supabase) {
-    const { data, error } = await supabase.from('invoice_templates').select('*').order('created_at');
+    const { data, error } = await supabase.from('invoice_templates')
+      .select('*').order('created_at', { ascending: true }).order('name', { ascending: true });
     if (error) throw error;
     return (data || []).map(mapTemplateFromDB);
   }
@@ -345,7 +346,10 @@ export const deleteTemplate = async (id: string): Promise<void> => {
 
 export const fetchProducts = async (): Promise<Product[]> => {
   if (supabase) {
-    const { data, error } = await supabase.from('products').select('*').order('created_at');
+    // 대량 등록은 한 트랜잭션이라 created_at 이 전부 같다. 그러면 정렬이 불안정해져서
+    // 제품을 하나 수정할 때마다 목록 순서가 뒤바뀐다. sku 를 2차 기준으로 고정한다.
+    const { data, error } = await supabase.from('products')
+      .select('*').order('created_at', { ascending: true }).order('sku', { ascending: true });
     if (error) throw error;
     return (data || []).map(mapProductFromDB);
   }
@@ -425,7 +429,47 @@ export interface SalesSaveResult {
     skippedItems: any[];
     error?: 'LIMIT_REACHED' | string;
     countToDelete?: number;
+    /** 주문번호가 겹쳐 한 줄로 합쳐진 행 수 */
+    mergedCount?: number;
 }
+
+/**
+ * sales_records 에는 (user_id, order_id, supplier_name, product_name) 유니크 인덱스가 있다.
+ * 매핑한 주문번호 열이 행마다 고유하지 않으면 (한 주문번호로 여러 명에게 보내는 주문 등)
+ * 배치 안에서 키가 겹쳐 insert 가 통째로 실패한다.
+ *
+ * sales_records 는 수취인을 저장하지 않고 정산 집계가 목적이므로,
+ * 키가 겹치는 행은 버리지 않고 수량·금액을 합쳐 한 줄로 만든다.
+ * 주문번호가 없는 행은 부분 인덱스 대상이 아니라 그대로 둔다.
+ */
+const mergeDuplicateRecords = (records: Omit<SalesRecord, 'id' | 'created_at'>[]) => {
+    const merged: Omit<SalesRecord, 'id' | 'created_at'>[] = [];
+    const byKey = new Map<string, Omit<SalesRecord, 'id' | 'created_at'>>();
+    let mergedCount = 0;
+
+    for (const r of records) {
+        const orderId = String(r.order_id ?? '').trim();
+        if (!orderId) { merged.push(r); continue; }
+        const key = `${orderId}|${r.supplier_name}|${r.product_name}`;
+        const hit = byKey.get(key);
+        if (!hit) {
+            const copy = { ...r };
+            byKey.set(key, copy);
+            merged.push(copy);
+            continue;
+        }
+        hit.quantity += r.quantity;
+        hit.total_sales_amount += r.total_sales_amount;
+        hit.total_purchase_amount += r.total_purchase_amount;
+        hit.total_supply_amount = (hit.total_supply_amount ?? 0) + (r.total_supply_amount ?? 0);
+        hit.total_vat_amount = (hit.total_vat_amount ?? 0) + (r.total_vat_amount ?? 0);
+        hit.total_shipping_cost += r.total_shipping_cost;
+        hit.total_market_fee += r.total_market_fee;
+        hit.net_profit += r.net_profit;
+        mergedCount++;
+    }
+    return { merged, mergedCount };
+};
 
 export const deleteOldestSalesRecords = async (count: number) => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -439,9 +483,12 @@ export const deleteOldestSalesRecords = async (count: number) => {
     await logActivity(user.id, 'ROTATE_SALES', `저장 공간 확보를 위해 오래된 데이터 ${idsToDelete.length}건 자동 삭제`);
 };
 
-export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'created_at'>[]): Promise<SalesSaveResult> => {
+export const saveSalesRecords = async (input: Omit<SalesRecord, 'id' | 'created_at'>[]): Promise<SalesSaveResult> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('인증이 만료되었습니다.');
+
+    // 배치 안의 키 충돌부터 없앤다. 안 하면 유니크 인덱스에 걸려 전부 실패한다.
+    const { merged: records, mergedCount } = mergeDuplicateRecords(input);
 
     const profile = await getUserProfile(user.id);
     const tierLimit = profile?.tier?.max_crm_count ?? DEFAULT_TIERS[profile?.tier_id || 'free'].max_crm_count ?? 20;
@@ -495,7 +542,7 @@ export const saveSalesRecords = async (records: Omit<SalesRecord, 'id' | 'create
         await logActivity(user.id, 'SAVE_SALES', `${newRecords.length}건의 매출 기록 저장 (중복 ${skipped.length}건 제외)`);
     }
 
-    return { success: true, savedCount: newRecords.length, skippedCount: skipped.length, skippedItems: skipped };
+    return { success: true, savedCount: newRecords.length, skippedCount: skipped.length, skippedItems: skipped, mergedCount };
 };
 
 export const fetchSalesRecords = async (startDate: string, endDate: string): Promise<SalesRecord[]> => {
