@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
+import { colLetter } from './excelColumn';
 
 /**
  * 제품 대량 등록용 샘플 엑셀을 만든다.
@@ -25,13 +26,6 @@ const BASE_COLUMNS = [
 const BUNDLE_COLUMN = '묶음배송';
 /** 제품그룹은 맨 뒤 열. 고르면 발주처·송장양식·비용이 한꺼번에 정해진다 */
 const GROUP_COLUMN = '제품그룹';
-
-/** 0 → 'A', 25 → 'Z', 26 → 'AA' */
-const colLetter = (index: number): string => {
-  let n = index, out = '';
-  do { out = String.fromCharCode(65 + (n % 26)) + out; n = Math.floor(n / 26) - 1; } while (n >= 0);
-  return out;
-};
 
 const escapeXml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { FileSpreadsheet, X, Plus, Trash2, ChevronUp, ChevronDown, AlertTriangle, Info } from 'lucide-react';
 import { InvoiceTemplate } from '../types';
+import { colLetter } from '../services/excelColumn';
 
 /**
  * 송장 양식 편집.
@@ -160,7 +161,7 @@ export const TemplateEditModal: React.FC<Props> = ({ open, template, takenNames,
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-white">
                 <tr className="text-left text-slate-500 border-b">
-                  <th className="py-2 w-10">순서</th>
+                  <th className="py-2 w-10">엑셀 열</th>
                   <th className="py-2">매칭용 (1행)</th>
                   <th className="py-2">출력용 (2행)</th>
                   {aliasSupported && <th className="py-2">다른 이름 (쉼표 구분)</th>}
@@ -172,7 +173,8 @@ export const TemplateEditModal: React.FC<Props> = ({ open, template, takenNames,
                   const isDup = c.match.trim() !== '' && duplicates.has(c.match.trim());
                   return (
                     <tr key={c.key} className="border-b border-slate-50">
-                      <td className="py-1.5 text-center text-slate-400 font-mono">{i + 1}</td>
+                      {/* 엑셀을 열어놓고 대조할 때 1,2,3 보다 A,B,C 가 바로 눈에 들어온다 */}
+                      <td className="py-1.5 text-center text-slate-400 font-mono font-bold">{colLetter(i)}</td>
                       <td className="py-1.5 pr-2">
                         <input className={`${inputCls} ${isDup ? 'border-red-300 bg-red-50' : ''}`}
                           value={c.match} placeholder="예: 수취인명"
