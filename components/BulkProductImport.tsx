@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { ClipboardPaste, FileSpreadsheet, Download, Plus, Trash2, AlertTriangle, Check, X, Wand2 } from 'lucide-react';
-import { Product, InvoiceTemplate, Supplier, VatType } from '../types';
+import { Product, InvoiceTemplate, ProductGroup, Supplier, VatType } from '../types';
 import { buildBulkSampleWorkbook, downloadBlob } from '../services/bulkSample';
 
 /**
@@ -15,7 +15,7 @@ import { buildBulkSampleWorkbook, downloadBlob } from '../services/bulkSample';
 
 // ── 붙여넣은 열이 무엇인지 ──────────────────────────────────────────────────
 type FieldKey =
-  | 'ignore' | 'sku' | 'name' | 'supplier' | 'template' | 'additionalName' | 'useAlias'
+  | 'ignore' | 'sku' | 'name' | 'supplier' | 'template' | 'group' | 'additionalName' | 'useAlias'
   | 'purchaseCost' | 'salesPrice' | 'shippingCost' | 'otherCost' | 'marketFeeRate' | 'vatType' | 'bundleShipping';
 
 const FIELD_LABELS: { key: FieldKey; label: string }[] = [
@@ -24,6 +24,7 @@ const FIELD_LABELS: { key: FieldKey; label: string }[] = [
   { key: 'name',           label: '제품명' },
   { key: 'additionalName', label: '별칭' },
   { key: 'useAlias',       label: '별칭사용' },
+  { key: 'group',          label: '제품그룹' },
   { key: 'supplier',       label: '발주처' },
   { key: 'template',       label: '송장양식' },
   { key: 'purchaseCost',   label: '매입가' },
@@ -42,6 +43,7 @@ const ALIASES: { key: FieldKey; words: string[] }[] = [
   { key: 'useAlias',       words: ['별칭사용', '대체제품명사용', '별칭 사용', '대체명사용'] },
   { key: 'additionalName', words: ['별칭', '대체제품', '추가제품', '대체상품', '대체명'] },
   { key: 'name',           words: ['제품명', '상품명', '품명', '품목명', 'name'] },
+  { key: 'group',          words: ['그룹', 'group'] },
   { key: 'supplier',       words: ['발주처', '공급처', '거래처', '공급사', '매입처', '업체'] },
   { key: 'template',       words: ['양식', 'template'] },
   { key: 'purchaseCost',   words: ['매입', '원가', '공급가'] },
@@ -72,6 +74,7 @@ interface DraftRow {
   name: string;
   supplier: string;
   templateId: string;
+  groupId: string;          // 고르면 발주처·양식·비용이 한 번에 채워진다
   additionalName: string;   // 별칭 — 발주처 송장에 이 이름으로 찍는다
   useAlias: boolean;
   purchaseCost: string;
@@ -84,7 +87,7 @@ interface DraftRow {
 }
 
 const blankRow = (key: number): DraftRow => ({
-  key, sku: '', name: '', supplier: '', templateId: '', additionalName: '', useAlias: false,
+  key, sku: '', name: '', supplier: '', templateId: '', groupId: '', additionalName: '', useAlias: false,
   purchaseCost: '', salesPrice: '', shippingCost: '', otherCost: '', marketFeeRate: '',
   vatType: 'taxable', bundleShipping: false,
 });
@@ -96,9 +99,35 @@ const blankRow = (key: number): DraftRow => ({
 const isYes = (v: string) =>
   ['y', 'yes', '1', 'o', 'true', 'ㅇ', '사용', '예', '가능', '함', 'ok'].includes(v.trim().toLowerCase());
 
+/** 이름으로 찾아 쓰는 표들. 붙여넣은 글자를 id 로 바꾸는 데 쓴다. */
+interface Lookups {
+  templateByName: Map<string, string>;
+  groupByName: Map<string, ProductGroup>;
+}
+
+/**
+ * 그룹의 공통값을 한 줄에 입힌다.
+ * 제품마다 다른 값(SKU·제품명·판매가·매입가)은 건드리지 않는다.
+ */
+const applyGroup = (r: DraftRow, g: ProductGroup) => {
+  r.groupId = g.id;
+  r.templateId = g.templateId;
+  r.supplier = g.supplierName || '';
+  r.shippingCost = String(g.shippingCost || 0);
+  r.otherCost = String(g.otherCost || 0);
+  r.marketFeeRate = String(g.marketFeeRate || 0);
+  r.vatType = g.vatType || 'taxable';
+  r.bundleShipping = g.bundleShipping === true;
+};
+
 /** 붙여넣은 칸 하나를 해당 필드에 넣는다. 붙여넣기와 열 재지정 양쪽에서 같은 규칙을 쓴다. */
-const applyCell = (r: DraftRow, field: FieldKey, v: string, templateByName: Map<string, string>) => {
+const applyCell = (r: DraftRow, field: FieldKey, v: string, { templateByName, groupByName }: Lookups) => {
   switch (field) {
+    case 'group': {
+      const g = groupByName.get(v.toLowerCase());
+      if (g) applyGroup(r, g);
+      break;
+    }
     case 'sku': r.sku = v; break;
     case 'name': r.name = v; break;
     case 'supplier': r.supplier = v; break;
@@ -115,14 +144,21 @@ const applyCell = (r: DraftRow, field: FieldKey, v: string, templateByName: Map<
   }
 };
 
-const buildRows = (body: string[][], cols: FieldKey[], templateByName: Map<string, string>, startKey: number): DraftRow[] =>
+const buildRows = (body: string[][], cols: FieldKey[], lookups: Lookups, startKey: number): DraftRow[] =>
   body.map((cells, n) => {
     const r = blankRow(startKey + n);
-    cols.forEach((field, i) => {
+    // 그룹 열을 먼저 읽어 기본값을 깔고, 나머지 열이 그 위에 덮어쓰게 한다.
+    // (열 순서가 어떻든 엑셀에 직접 적은 값이 그룹 기본값보다 우선한다)
+    const order = cols.map((field, i) => [field, i] as const)
+      .sort((a, b) => Number(b[0] === 'group') - Number(a[0] === 'group'));
+    order.forEach(([field, i]) => {
       const v = (cells[i] ?? '').trim();
       // 별칭사용 열은 값이 비어도 'N' 으로 해석해야 하므로 예외
       if (field === 'ignore' || (!v && field !== 'useAlias' && field !== 'bundleShipping')) return;
-      applyCell(r, field, v, templateByName);
+      // 그룹을 쓴 줄에서 묶음배송 칸이 비어 있으면 그룹 설정을 그대로 둔다.
+      // (빈 칸 = N 규칙이 그룹 값을 조용히 꺼버리던 문제)
+      if (field === 'bundleShipping' && !v && r.groupId) return;
+      applyCell(r, field, v, lookups);
     });
     return r;
   });
@@ -144,6 +180,7 @@ interface Props {
   onClose: () => void;
   templates: InvoiceTemplate[];
   suppliers: Supplier[];
+  groups: ProductGroup[];       // 제품 그룹. 비어 있으면 그룹 열·드롭다운을 숨긴다
   existingProducts: Product[];
   useSupplierMaster: boolean;   // suppliers 테이블을 쓰는 스키마인지
   remainingSlots: number;       // 등급 한도까지 남은 제품 수
@@ -152,7 +189,7 @@ interface Props {
 }
 
 export const BulkProductImport: React.FC<Props> = ({
-  open, onClose, templates, suppliers, existingProducts, useSupplierMaster, remainingSlots, bundleSupported, onSubmit,
+  open, onClose, templates, suppliers, groups, existingProducts, useSupplierMaster, remainingSlots, bundleSupported, onSubmit,
 }) => {
   const [raw, setRaw] = useState('');
   const [columns, setColumns] = useState<FieldKey[]>([]);
@@ -161,8 +198,10 @@ export const BulkProductImport: React.FC<Props> = ({
   const nextKey = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const templateByName = useMemo(
-    () => new Map(templates.map(t => [t.name.trim().toLowerCase(), t.id])), [templates]);
+  const lookups = useMemo<Lookups>(() => ({
+    templateByName: new Map(templates.map(t => [t.name.trim().toLowerCase(), t.id])),
+    groupByName: new Map(groups.map(g => [g.name.trim().toLowerCase(), g])),
+  }), [templates, groups]);
   const supplierNames = useMemo(
     () => new Set(suppliers.map(s => s.name.trim().toLowerCase())), [suppliers]);
   const existingSkus = useMemo(
@@ -183,7 +222,7 @@ export const BulkProductImport: React.FC<Props> = ({
     }
 
     const body = isHeader ? grid.slice(1) : grid;
-    const next = buildRows(body, cols, templateByName, nextKey.current);
+    const next = buildRows(body, cols, lookups, nextKey.current);
     nextKey.current += next.length;
 
     setColumns(cols);
@@ -204,7 +243,7 @@ export const BulkProductImport: React.FC<Props> = ({
     const guessed = rawGrid[0].map(guessField);
     const isHeader = guessed.filter(g => g !== 'ignore').length >= 2;
     const body = isHeader ? rawGrid.slice(1) : rawGrid;
-    const next = buildRows(body, cols, templateByName, nextKey.current);
+    const next = buildRows(body, cols, lookups, nextKey.current);
     nextKey.current += next.length;
     setRows(next);
   };
@@ -253,6 +292,7 @@ export const BulkProductImport: React.FC<Props> = ({
       const blob = await buildBulkSampleWorkbook({
         templateNames: templates.map(t => t.name),
         supplierNames: suppliers.map(s => s.name),
+        groupNames: groups.map(g => g.name),
         useSupplierMaster,
 
       });
@@ -287,13 +327,30 @@ export const BulkProductImport: React.FC<Props> = ({
     });
 
     return { errors, validCount: accepted };
-  }, [rows, existingSkus, supplierNames, templateByName, useSupplierMaster, remainingSlots]);
+  }, [rows, existingSkus, supplierNames, useSupplierMaster, remainingSlots]);
 
   const update = (i: number, patch: Partial<DraftRow>) =>
     setRows(prev => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
 
   const applyAll = (patch: Partial<DraftRow>) =>
     setRows(prev => prev.map(r => ({ ...r, ...patch })));
+
+  /** 그룹을 고르면 그 줄의 발주처·양식·비용을 그룹 값으로 채운다 */
+  const pickGroup = (i: number, groupId: string) => {
+    const g = groups.find(x => x.id === groupId);
+    setRows(prev => prev.map((r, idx) => {
+      if (idx !== i) return r;
+      const next = { ...r, groupId };
+      if (g) applyGroup(next, g);
+      return next;
+    }));
+  };
+
+  const applyAllGroup = (groupId: string) => {
+    const g = groups.find(x => x.id === groupId);
+    if (!g) return;
+    setRows(prev => prev.map(r => { const next = { ...r, groupId }; applyGroup(next, g); return next; }));
+  };
 
   const submit = async () => {
     const payload: Omit<Product, 'id' | 'user_id'>[] = [];
@@ -306,6 +363,7 @@ export const BulkProductImport: React.FC<Props> = ({
         supplierName: matched?.name || r.supplier.trim(),
         supplierId: matched?.id,
         templateId: r.templateId,
+        groupId: r.groupId || undefined,
         additionalName: r.additionalName.trim() || undefined,
         useAdditionalName: r.useAlias && !!r.additionalName.trim(),
         purchaseCost: toNumber(r.purchaseCost),
@@ -398,6 +456,14 @@ export const BulkProductImport: React.FC<Props> = ({
           <>
             <div className="px-6 py-3 border-b bg-white shrink-0 flex flex-wrap items-center gap-x-4 gap-y-2">
               <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1"><Wand2 size={13} /> 모든 행에 한 번에 적용</span>
+              {groups.length > 0 && (
+                <select onChange={e => e.target.value && applyAllGroup(e.target.value)} value=""
+                  className="rounded border-indigo-300 bg-indigo-50 text-[11px] py-1 font-bold text-indigo-700"
+                  title="발주처·송장양식·비용을 한 번에 채웁니다">
+                  <option value="">제품 그룹 일괄 지정</option>
+                  {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+              )}
               <select onChange={e => e.target.value && applyAll({ templateId: e.target.value })} value=""
                 className="rounded border-slate-300 text-[11px] py-1">
                 <option value="">송장 양식 일괄 지정</option>
@@ -451,6 +517,7 @@ export const BulkProductImport: React.FC<Props> = ({
                     <th className="px-2 py-2 min-w-[150px]">제품명</th>
                     <th className="px-2 py-2 min-w-[150px]">별칭 <span className="font-normal text-slate-400">(송장에 찍힐 이름)</span></th>
                     <th className="px-2 py-2 w-12 text-center">사용</th>
+                    {groups.length > 0 && <th className="px-2 py-2 min-w-[130px]">그룹</th>}
                     <th className="px-2 py-2 min-w-[130px]">발주처</th>
                     <th className="px-2 py-2 min-w-[130px]">송장양식</th>
                     <th className="px-2 py-2 min-w-[90px] text-right">매입가</th>
@@ -484,6 +551,14 @@ export const BulkProductImport: React.FC<Props> = ({
                             onChange={e => update(i, { useAlias: e.target.checked })}
                             className="rounded border-slate-300 disabled:opacity-30" />
                         </td>
+                        {groups.length > 0 && (
+                          <td className="px-1">
+                            <select className={cell} value={r.groupId} onChange={e => pickGroup(i, e.target.value)}>
+                              <option value="">없음</option>
+                              {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                            </select>
+                          </td>
+                        )}
                         <td className="px-1">
                           {useSupplierMaster ? (
                             <select className={cell} value={r.supplier} onChange={e => update(i, { supplier: e.target.value })}>

@@ -1,6 +1,6 @@
 
 import { supabase } from './supabase';
-import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings, AnalyticsEvent, BlogPost, UserGuide, Supplier } from '../types';
+import { Product, InvoiceTemplate, UserProfile, Tier, ActivityLog, SalesRecord, AppSettings, AnalyticsEvent, BlogPost, UserGuide, Supplier, ProductGroup } from '../types';
 
 export type { AppSettings };
 
@@ -14,6 +14,7 @@ const mapProductFromDB = (data: any): Product => ({
   supplierName: data.supplier_name,
   supplierId: data.supplier_id || undefined,
   templateId: data.template_id,
+  groupId: data.group_id || undefined,
   user_id: data.user_id,
   // Financial Mapping
   purchaseCost: data.purchase_cost || 0,
@@ -39,6 +40,21 @@ const mapSupplierFromDB = (data: any): Supplier => ({
   user_id: data.user_id,
 });
 
+const mapProductGroupFromDB = (data: any): ProductGroup => ({
+  id: data.id,
+  name: data.name,
+  templateId: data.template_id,
+  supplierId: data.supplier_id || undefined,
+  supplierName: data.supplier_name || '',
+  shippingCost: Number(data.shipping_cost) || 0,
+  otherCost: Number(data.other_cost) || 0,
+  marketFeeRate: Number(data.market_fee_rate) || 0,
+  vatType: data.vat_type === 'exempt' ? 'exempt' : 'taxable',
+  bundleShipping: data.bundle_shipping === true,
+  memo: data.memo || '',
+  user_id: data.user_id,
+});
+
 /* ------------------------------------------------------------------ *
  * 스키마 지원 여부 감지
  *
@@ -52,14 +68,21 @@ export interface SchemaSupport {
   salesVat: boolean;    // sales_records.total_vat_amount
   templateAliases: boolean; // invoice_templates.header_aliases
   productBundle: boolean;   // products.bundle_shipping
+  productGroups: boolean;   // product_groups 테이블 + products.group_id
 }
+
+/** 마이그레이션 실행 전 기본값. 새 필드는 전부 꺼진 상태로 시작한다. */
+export const NO_SCHEMA_SUPPORT: SchemaSupport = {
+  suppliers: false, productVat: false, salesVat: false,
+  templateAliases: false, productBundle: false, productGroups: false,
+};
 
 let schemaCache: SchemaSupport | null = null;
 
 export const getSchemaSupport = async (force = false): Promise<SchemaSupport> => {
   if (schemaCache && !force) return schemaCache;
   if (!supabase) {
-    schemaCache = { suppliers: false, productVat: false, salesVat: false, templateAliases: false, productBundle: false };
+    schemaCache = { ...NO_SCHEMA_SUPPORT };
     return schemaCache;
   }
   const probe = async (table: string, columns: string) => {
@@ -68,14 +91,15 @@ export const getSchemaSupport = async (force = false): Promise<SchemaSupport> =>
       return !error;
     } catch (e) { return false; }
   };
-  const [suppliers, productVat, salesVat, templateAliases, productBundle] = await Promise.all([
+  const [suppliers, productVat, salesVat, templateAliases, productBundle, productGroups] = await Promise.all([
     (async () => (await probe('suppliers', 'id')) && (await probe('products', 'supplier_id')))(),
     probe('products', 'vat_type'),
     probe('sales_records', 'total_vat_amount'),
     probe('invoice_templates', 'header_aliases'),
     probe('products', 'bundle_shipping'),
+    (async () => (await probe('product_groups', 'id')) && (await probe('products', 'group_id')))(),
   ]);
-  schemaCache = { suppliers, productVat, salesVat, templateAliases, productBundle };
+  schemaCache = { suppliers, productVat, salesVat, templateAliases, productBundle, productGroups };
   return schemaCache;
 };
 
@@ -174,6 +198,95 @@ export const migrateSuppliersFromProducts = async (): Promise<{ created: number;
   }
   await logActivity(user.id, 'MIGRATE_SUPPLIERS', `발주처 ${toCreate.length}곳 생성, 제품 ${linked}건 연결`);
   return { created: toCreate.length, linked };
+};
+
+/* --------------------------- 제품 그룹 ---------------------------- *
+ * 그룹은 제품 등록 폼의 '기본값 묶음'이다. 저장 시 값은 제품 행에 복사되므로
+ * 송장 출력·정산 코드는 그룹의 존재를 몰라도 된다 (types.ts ProductGroup 참고).
+ * ------------------------------------------------------------------ */
+
+export const fetchProductGroups = async (): Promise<ProductGroup[]> => {
+  const schema = await getSchemaSupport();
+  if (!supabase || !schema.productGroups) return [];
+  const { data, error } = await supabase.from('product_groups').select('*').order('name');
+  if (error) return [];
+  return (data || []).map(mapProductGroupFromDB);
+};
+
+const groupPayload = (g: Partial<ProductGroup>) => {
+  const p: any = {};
+  if (g.name !== undefined) p.name = String(g.name).trim();
+  if (g.templateId !== undefined) p.template_id = g.templateId;
+  if (g.supplierId !== undefined) p.supplier_id = g.supplierId || null;
+  if (g.supplierName !== undefined) p.supplier_name = g.supplierName || '';
+  if (g.shippingCost !== undefined) p.shipping_cost = g.shippingCost || 0;
+  if (g.otherCost !== undefined) p.other_cost = g.otherCost || 0;
+  if (g.marketFeeRate !== undefined) p.market_fee_rate = g.marketFeeRate || 0;
+  if (g.vatType !== undefined) p.vat_type = g.vatType || 'taxable';
+  if (g.bundleShipping !== undefined) p.bundle_shipping = g.bundleShipping === true;
+  if (g.memo !== undefined) p.memo = g.memo || null;
+  return p;
+};
+
+export const createProductGroup = async (group: Omit<ProductGroup, 'id' | 'user_id'>): Promise<ProductGroup> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('인증이 만료되었습니다.');
+  const { data, error } = await supabase.from('product_groups')
+    .insert({ user_id: user.id, ...groupPayload(group) }).select().single();
+  if (error) {
+    if (String(error.code) === '23505') throw new Error(`이미 등록된 그룹 이름입니다: ${group.name}`);
+    throw error;
+  }
+  await logActivity(user.id, 'CREATE_PRODUCT_GROUP', `제품 그룹 '${group.name}' 등록`);
+  return mapProductGroupFromDB(data);
+};
+
+export const updateProductGroup = async (id: string, updates: Partial<ProductGroup>): Promise<ProductGroup> => {
+  const { data, error } = await supabase.from('product_groups')
+    .update(groupPayload(updates)).eq('id', id).select().single();
+  if (error) {
+    if (String(error.code) === '23505') throw new Error('이미 등록된 그룹 이름입니다.');
+    throw error;
+  }
+  return mapProductGroupFromDB(data);
+};
+
+/**
+ * 그룹을 지워도 제품은 지워지지 않는다. 제품은 이미 값을 자기 행에 갖고 있고,
+ * group_id 만 비워진다 (on delete set null).
+ */
+export const deleteProductGroup = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('product_groups').delete().eq('id', id);
+  if (error) throw error;
+};
+
+/**
+ * 그룹의 현재 설정을 소속 제품 전체에 다시 입힌다.
+ * 제품마다 따로 정하는 값(SKU·제품명·판매가·매입가)은 건드리지 않는다.
+ * @returns 실제로 바뀐 제품 수
+ */
+export const applyGroupToProducts = async (group: ProductGroup): Promise<number> => {
+  const schema = await getSchemaSupport();
+  if (!schema.productGroups) return 0;
+
+  const updates: any = {
+    template_id: group.templateId,
+    supplier_name: group.supplierName,
+    shipping_cost: group.shippingCost || 0,
+    other_cost: group.otherCost || 0,
+    market_fee_rate: group.marketFeeRate || 0,
+  };
+  if (schema.suppliers) updates.supplier_id = group.supplierId || null;
+  if (schema.productVat) updates.vat_type = group.vatType || 'taxable';
+  if (schema.productBundle) updates.bundle_shipping = group.bundleShipping === true;
+
+  const { data, error } = await supabase.from('products')
+    .update(updates).eq('group_id', group.id).select('id');
+  if (error) throw error;
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) await logActivity(user.id, 'APPLY_PRODUCT_GROUP', `그룹 '${group.name}' 설정을 제품 ${(data || []).length}건에 적용`);
+  return (data || []).length;
 };
 
 const mapTemplateFromDB = (data: any): InvoiceTemplate => ({
@@ -374,6 +487,7 @@ const productPayload = (p: Partial<Product>, schema: SchemaSupport) => {
   if (schema.suppliers) payload.supplier_id = p.supplierId || null;
   if (schema.productVat) payload.vat_type = p.vatType || 'taxable';
   if (schema.productBundle) payload.bundle_shipping = p.bundleShipping === true;
+  if (schema.productGroups) payload.group_id = p.groupId || null;
   return payload;
 };
 
@@ -414,6 +528,7 @@ export const updateProduct = async (id: string, product: Partial<Product>): Prom
     if (schema.suppliers && product.supplierId !== undefined) updates.supplier_id = product.supplierId || null;
     if (schema.productVat && product.vatType !== undefined) updates.vat_type = product.vatType;
     if (schema.productBundle && product.bundleShipping !== undefined) updates.bundle_shipping = product.bundleShipping;
+    if (schema.productGroups && product.groupId !== undefined) updates.group_id = product.groupId || null;
     const { data, error } = await supabase.from('products').update(updates).eq('id', id).select().single();
     if (error) throw error;
     return mapProductFromDB(data);

@@ -43,9 +43,9 @@ if (fail.length) { console.log('\n환경변수부터 고쳐야 합니다.\n'); p
 
 const db = createClient(URL, KEY, { auth: { persistSession: false } });
 
-// ── 1. 테이블 11개 ─────────────────────────────────────────────────────────
+// ── 1. 테이블 12개 ─────────────────────────────────────────────────────────
 head('[1] 테이블 (STEP 2 스키마 실행 여부)');
-const TABLES = ['tiers', 'profiles', 'suppliers', 'invoice_templates', 'products',
+const TABLES = ['tiers', 'profiles', 'suppliers', 'product_groups', 'invoice_templates', 'products',
                 'sales_records', 'app_settings', 'activity_logs', 'analytics_events',
                 'blog_posts', 'user_guides'];
 for (const t of TABLES) {
@@ -70,7 +70,7 @@ else ok(`app_settings ${st.length}개`);
 
 // ── 3. RLS 동작 ────────────────────────────────────────────────────────────
 head('[3] RLS (비로그인 키로 남의 데이터가 안 보여야 함)');
-for (const t of ['products', 'suppliers', 'invoice_templates', 'sales_records', 'profiles']) {
+for (const t of ['products', 'suppliers', 'product_groups', 'invoice_templates', 'sales_records', 'profiles']) {
   const { data, error } = await db.from(t).select('id').limit(1);
   if (error) ok(`${t} — 비로그인 조회 차단됨 (${error.code})`);
   else if (data.length === 0) ok(`${t} — 비로그인 조회 시 0행 (정상)`);

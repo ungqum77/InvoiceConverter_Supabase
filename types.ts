@@ -22,6 +22,30 @@ export interface Supplier {
   user_id?: string;
 }
 
+/**
+ * 제품 그룹.
+ * 같은 발주처·같은 송장 양식으로 나가는 제품들이 제품마다 같은 값을 다시 고르고 있었다.
+ * 공통값을 그룹에 한 번 넣어두면 제품은 그룹만 고르고 가격만 입력하면 된다.
+ *
+ * 그룹은 '입력 기본값'이다. 저장되는 순간 값은 제품 행에 복사되고,
+ * 송장 출력·정산은 예전처럼 제품 값만 본다. 그래서 그룹을 지워도 제품은 멀쩡하다.
+ * 그룹 설정을 바꾼 뒤 소속 제품에 다시 입히려면 '설정 일괄 적용'을 쓴다.
+ */
+export interface ProductGroup {
+  id: string;
+  name: string;             // 그룹명 (고유)
+  templateId: string;       // 이 그룹이 쓰는 송장 양식
+  supplierId?: string;      // 발주처 마스터 참조
+  supplierName: string;     // 발주처명 (표시/하위호환용)
+  shippingCost?: number;    // 기본 택배비용
+  otherCost?: number;       // 기본 기타비용
+  marketFeeRate?: number;   // 기본 마켓 수수료율 (%)
+  vatType?: VatType;        // 기본 과세 구분
+  bundleShipping?: boolean; // 기본 묶음배송 여부
+  memo?: string;
+  user_id?: string;
+}
+
 export interface Product {
   id: string;
   sku: string;
@@ -31,6 +55,7 @@ export interface Product {
   supplierName: string; // 발주처명 (표시/하위호환용. 정본은 supplierId)
   supplierId?: string;  // 발주처 마스터 참조
   templateId: string; // Links to an InvoiceTemplate
+  groupId?: string;   // 제품 그룹 참조 (공통 설정을 물려받은 출처)
   user_id?: string; // Supabase owner
 
   // Financial Fields (New)

@@ -21,8 +21,17 @@ const BASE_COLUMNS = [
   'SKU', '제품명', '별칭', '별칭사용', '발주처', '송장양식',
   '매입가', '판매가', '배송비', '기타비용', '수수료율', '과세구분',
 ];
-/** 묶음배송은 맨 뒤 열 (M열) */
+/** 묶음배송은 기본 열 뒤 (M열) */
 const BUNDLE_COLUMN = '묶음배송';
+/** 제품그룹은 맨 뒤 열. 고르면 발주처·송장양식·비용이 한꺼번에 정해진다 */
+const GROUP_COLUMN = '제품그룹';
+
+/** 0 → 'A', 25 → 'Z', 26 → 'AA' */
+const colLetter = (index: number): string => {
+  let n = index, out = '';
+  do { out = String.fromCharCode(65 + (n % 26)) + out; n = Math.floor(n / 26) - 1; } while (n >= 0);
+  return out;
+};
 
 const escapeXml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -82,6 +91,8 @@ const findSheetPath = async (zip: JSZip, sheetIndex: number): Promise<string> =>
 export interface SampleOptions {
   templateNames: string[];
   supplierNames: string[];
+  /** 등록해둔 제품 그룹 이름. 비어 있으면 그룹 열을 넣지 않는다 */
+  groupNames?: string[];
   /** 발주처 마스터를 안 쓰는 스키마면 발주처 드롭다운을 걸지 않는다 */
   useSupplierMaster: boolean;
   /**
@@ -93,8 +104,12 @@ export interface SampleOptions {
 }
 
 export const buildBulkSampleWorkbook = async (opts: SampleOptions): Promise<Blob> => {
-  const { templateNames, supplierNames, useSupplierMaster, includeBundle = true } = opts;
-  const COLUMNS = includeBundle ? [...BASE_COLUMNS, BUNDLE_COLUMN] : BASE_COLUMNS;
+  const { templateNames, supplierNames, groupNames = [], useSupplierMaster, includeBundle = true } = opts;
+  const COLUMNS = [
+    ...BASE_COLUMNS,
+    ...(includeBundle ? [BUNDLE_COLUMN] : []),
+    ...(groupNames.length > 0 ? [GROUP_COLUMN] : []),
+  ];
 
   // ── 1) 제품 시트: 제목 줄 + 예시 두 줄 ──────────────────────────────────
   const example: any[][] = [
@@ -104,24 +119,27 @@ export const buildBulkSampleWorkbook = async (opts: SampleOptions): Promise<Blob
      supplierNames[0] ?? '', templateNames[0] ?? '', 8000, 13000, 3000, 0, 10, '면세'],
   ];
   if (includeBundle) { example[0].push('Y'); example[1].push('N'); }
+  // 그룹을 적으면 발주처·송장양식·비용 칸은 비워둬도 그룹 값으로 채워진다
+  if (groupNames.length > 0) { example[0].push(groupNames[0] ?? ''); example[1].push(groupNames[0] ?? ''); }
   const dataWs = XLSX.utils.aoa_to_sheet([[...COLUMNS], ...example]);
   dataWs['!cols'] = COLUMNS.map((c: string) => ({ wch: c === '제품명' || c === '별칭' ? 20 : 12 }));
 
   // ── 2) 선택목록 시트 ────────────────────────────────────────────────────
   const vatOptions = ['과세', '면세'];
   const yesNo = ['Y', 'N'];
-  const height = Math.max(templateNames.length, supplierNames.length, vatOptions.length, yesNo.length);
-  const listRows: string[][] = [['송장양식', '발주처', '과세구분', '별칭사용']];
+  const height = Math.max(templateNames.length, supplierNames.length, vatOptions.length, yesNo.length, groupNames.length);
+  const listRows: string[][] = [['송장양식', '발주처', '과세구분', '별칭사용', '제품그룹']];
   for (let i = 0; i < height; i++) {
     listRows.push([
       templateNames[i] ?? '',
       supplierNames[i] ?? '',
       vatOptions[i] ?? '',
       yesNo[i] ?? '',
+      groupNames[i] ?? '',
     ]);
   }
   const listWs = XLSX.utils.aoa_to_sheet(listRows);
-  listWs['!cols'] = [{ wch: 22 }, { wch: 22 }, { wch: 10 }, { wch: 10 }];
+  listWs['!cols'] = [{ wch: 22 }, { wch: 22 }, { wch: 10 }, { wch: 10 }, { wch: 22 }];
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, dataWs, DATA_SHEET);
@@ -140,6 +158,11 @@ export const buildBulkSampleWorkbook = async (opts: SampleOptions): Promise<Blob
   validations.push({ sqref: `D2:D${MAX_ROW}`, source: rangeOf('D', yesNo.length) });
   // 묶음배송(M열)도 Y/N 목록을 쓴다
   if (includeBundle) validations.push({ sqref: `M2:M${MAX_ROW}`, source: rangeOf('D', yesNo.length) });
+  // 제품그룹은 항상 맨 뒤 열이라 위치를 계산해서 건다
+  if (groupNames.length > 0) {
+    const gc = colLetter(COLUMNS.length - 1);
+    validations.push({ sqref: `${gc}2:${gc}${MAX_ROW}`, source: rangeOf('E', groupNames.length) });
+  }
 
   // ── 4) 생성 후 XML 에 주입 ──────────────────────────────────────────────
   const raw = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });

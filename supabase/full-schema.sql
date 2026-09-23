@@ -357,3 +357,36 @@ alter table public.invoice_templates
 -- 기존 동작이 바뀌지 않도록 기본값은 false(묶지 않음).
 alter table public.products
   add column if not exists bundle_shipping boolean not null default false;
+
+-- ── 제품 그룹 ──────────────────────────────────────────────────────────────
+-- 같은 발주처·같은 송장 양식으로 나가는 제품들의 공통 설정을 한 곳에 모아둔다.
+-- 제품 등록 시 그룹을 고르면 값이 폼에 채워지고 저장될 때 제품 행에 복사된다.
+-- 송장 출력·정산은 제품 값만 보므로, 그룹을 지워도 제품은 그대로 동작한다.
+create table if not exists public.product_groups (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references auth.users(id) on delete cascade,
+  name            text not null,
+  template_id     uuid not null references public.invoice_templates(id) on delete cascade,
+  supplier_id     uuid references public.suppliers(id) on delete set null,
+  supplier_name   text not null default '',
+  shipping_cost   numeric not null default 0,
+  other_cost      numeric not null default 0,
+  market_fee_rate numeric not null default 0,   -- %
+  vat_type        text not null default 'taxable',
+  bundle_shipping boolean not null default false,
+  memo            text,
+  created_at      timestamptz not null default now(),
+  constraint product_groups_vat_type_check check (vat_type in ('taxable', 'exempt'))
+);
+create unique index if not exists product_groups_user_name_key on public.product_groups (user_id, name);
+
+alter table public.product_groups enable row level security;
+drop policy if exists "product_groups_own_all" on public.product_groups;
+create policy "product_groups_own_all" on public.product_groups for all
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- 제품이 어느 그룹에서 왔는지. 그룹을 지워도 제품은 값을 그대로 들고 남는다.
+alter table public.products
+  add column if not exists group_id uuid references public.product_groups(id) on delete set null;
+
+create index if not exists products_group_id_idx on public.products (group_id);

@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { Plus, Trash2, Search, Save, X, FileSpreadsheet, Upload, Settings2, Building2, Tag, CheckSquare, Pencil, Lock, Zap, UserCog, LogOut, AlertOctagon, Calendar, History, Clock, Download, ArrowUpCircle, CreditCard, Award, Youtube, AlertTriangle, RefreshCw, ExternalLink, Sparkles, ChevronRight, FileUp, Check, ArrowDownCircle, DollarSign, PackageCheck } from 'lucide-react';
-import { Product, InvoiceTemplate, UserProfile, ActivityLog, Tier, Supplier, VatType } from '../types';
-import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchTemplates, createTemplate, deleteTemplate, updateTemplate, getUserProfile, getUsageStats, createProductsBulk, fetchActivityLogs, fetchAppSettings, AppSettings, trackEvent, fetchSuppliers, createSupplier, updateSupplier, deleteSupplier, migrateSuppliersFromProducts, getSchemaSupport, resetSchemaCache, SchemaSupport } from '../services/dbService';
+import { Plus, Trash2, Search, Save, X, FileSpreadsheet, Upload, Settings2, Building2, Tag, CheckSquare, Pencil, Lock, Zap, UserCog, LogOut, AlertOctagon, Calendar, History, Clock, Download, ArrowUpCircle, CreditCard, Award, Youtube, AlertTriangle, RefreshCw, ExternalLink, Sparkles, ChevronRight, FileUp, Check, ArrowDownCircle, DollarSign, PackageCheck, Layers, Wand2 } from 'lucide-react';
+import { Product, InvoiceTemplate, UserProfile, ActivityLog, Tier, Supplier, VatType, ProductGroup } from '../types';
+import { fetchProducts, createProduct, updateProduct, deleteProduct, fetchTemplates, createTemplate, deleteTemplate, updateTemplate, getUserProfile, getUsageStats, createProductsBulk, fetchActivityLogs, fetchAppSettings, AppSettings, trackEvent, fetchSuppliers, createSupplier, updateSupplier, deleteSupplier, migrateSuppliersFromProducts, getSchemaSupport, resetSchemaCache, SchemaSupport, NO_SCHEMA_SUPPORT, fetchProductGroups, createProductGroup, updateProductGroup, deleteProductGroup, applyGroupToProducts } from '../services/dbService';
 import { calcProfit } from '../services/calc';
 import { supabase } from '../services/supabase';
 import { Button } from '../components/Button';
@@ -11,6 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BulkProductImport } from '../components/BulkProductImport';
 import { SupplierFormModal, SupplierForm, BLANK_SUPPLIER } from '../components/SupplierFormModal';
+import { ProductGroupFormModal, ProductGroupForm, BLANK_PRODUCT_GROUP } from '../components/ProductGroupFormModal';
 import { TemplateEditModal } from '../components/TemplateEditModal';
 
 const YouTubeEmbed = ({ url, title }: { url: string; title: string }) => {
@@ -42,11 +43,12 @@ export const ProductManagement: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   
-  const [activeTab, setActiveTab] = useState<'templates' | 'suppliers' | 'products' | 'account'>('templates');
+  const [activeTab, setActiveTab] = useState<'templates' | 'suppliers' | 'groups' | 'products' | 'account'>('templates');
   const [products, setProducts] = useState<Product[]>([]);
   const [templates, setTemplates] = useState<InvoiceTemplate[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [schema, setSchema] = useState<SchemaSupport>({ suppliers: false, productVat: false, salesVat: false });
+  const [groups, setGroups] = useState<ProductGroup[]>([]);
+  const [schema, setSchema] = useState<SchemaSupport>(NO_SCHEMA_SUPPORT);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [stats, setStats] = useState({ productCount: 0, templateCount: 0 });
@@ -73,6 +75,7 @@ export const ProductManagement: React.FC = () => {
   const [newName, setNewName] = useState('');
   const [newSupplier, setNewSupplier] = useState('');
   const [newSupplierId, setNewSupplierId] = useState('');
+  const [newGroupId, setNewGroupId] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [newAdditionalName, setNewAdditionalName] = useState('');
   const [newUseAdditionalName, setNewUseAdditionalName] = useState(false);
@@ -92,13 +95,19 @@ export const ProductManagement: React.FC = () => {
   const [isMigrating, setIsMigrating] = useState(false);
   const [supplierInitial, setSupplierInitial] = useState<SupplierForm>(BLANK_SUPPLIER);
 
+  // 제품 그룹 modal
+  const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [groupInitial, setGroupInitial] = useState<ProductGroupForm>(BLANK_PRODUCT_GROUP);
+  const [applyingGroupId, setApplyingGroupId] = useState<string | null>(null);
+
   const templateFileRef = useRef<HTMLInputElement>(null);
   const [isTemplateUploading, setIsTemplateUploading] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<InvoiceTemplate | null>(null);
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam === 'account' || tabParam === 'products' || tabParam === 'templates' || tabParam === 'suppliers') setActiveTab(tabParam);
+    if (tabParam === 'account' || tabParam === 'products' || tabParam === 'templates' || tabParam === 'suppliers' || tabParam === 'groups') setActiveTab(tabParam);
   }, [searchParams]);
 
   useEffect(() => {
@@ -114,17 +123,19 @@ export const ProductManagement: React.FC = () => {
           // 그대로 쓰면 새 컬럼이 있는데도 없는 줄 알고 값을 버린다. 목록을 새로 불러올 때는 다시 확인한다.
           const schemaData = await getSchemaSupport(true);
           setSchema(schemaData);
-          const [prodData, tplData, userData, usageData, logData, settingsData, supData] = await Promise.all([
+          const [prodData, tplData, userData, usageData, logData, settingsData, supData, groupData] = await Promise.all([
             fetchProducts(),
             fetchTemplates(),
             getUserProfile(user.id),
             getUsageStats(user.id),
             fetchActivityLogs(user.id),
             fetchAppSettings(),
-            fetchSuppliers()
+            fetchSuppliers(),
+            fetchProductGroups()
           ]);
           setProducts(prodData);
           setTemplates(tplData);
+          setGroups(groupData);
           if (userData) setProfile(userData);
           if (usageData) setStats(usageData);
           setLogs(logData);
@@ -159,6 +170,7 @@ export const ProductManagement: React.FC = () => {
         || ''
       );
       setSelectedTemplateId(productToEdit.templateId);
+      setNewGroupId(productToEdit.groupId || '');
       setNewAdditionalName(productToEdit.additionalName || '');
       setNewUseAdditionalName(productToEdit.useAdditionalName || false);
       // Financials
@@ -175,6 +187,7 @@ export const ProductManagement: React.FC = () => {
       setNewName('');
       setNewSupplier('');
       setNewSupplierId('');
+      setNewGroupId('');
       setSelectedTemplateId('');
       setNewAdditionalName('');
       setNewUseAdditionalName(false);
@@ -188,6 +201,25 @@ export const ProductManagement: React.FC = () => {
       setBundleShipping(false);
     }
     setIsProductModalOpen(true);
+  };
+
+  /**
+   * 제품 등록 폼에서 그룹을 고르면 그룹의 공통값을 폼에 채운다.
+   * 채워 넣기만 할 뿐 잠그지는 않는다 — 제품 하나만 값이 다른 경우가 흔하다.
+   * 제품별로만 정하는 값(SKU·제품명·판매가·매입가)은 건드리지 않는다.
+   */
+  const handleGroupPick = (groupId: string) => {
+    setNewGroupId(groupId);
+    const g = groups.find(x => x.id === groupId);
+    if (!g) return;
+    setSelectedTemplateId(g.templateId);
+    setNewSupplierId(g.supplierId || '');
+    setNewSupplier(g.supplierName || '');
+    setShippingCost(g.shippingCost || 0);
+    setOtherCost(g.otherCost || 0);
+    setMarketFeeRate(g.marketFeeRate || 0);
+    setVatType(g.vatType || 'taxable');
+    setBundleShipping(g.bundleShipping === true);
   };
 
   /** 발주처 마스터를 쓰는 경우 선택된 id에서 이름을 가져온다(오타로 업체가 갈라지는 것을 방지). */
@@ -217,6 +249,8 @@ export const ProductManagement: React.FC = () => {
         supplierName: resolvedSupplierName,
         supplierId: schema.suppliers ? (newSupplierId || undefined) : undefined,
         templateId: selectedTemplateId,
+        // 그룹을 '선택 안 함'으로 바꾼 수정도 반영되도록 빈 문자열을 그대로 넘긴다
+        groupId: schema.productGroups ? newGroupId : undefined,
         additionalName: newAdditionalName,
         useAdditionalName: newUseAdditionalName,
         // Financials
@@ -262,6 +296,58 @@ export const ProductManagement: React.FC = () => {
     catch (err: any) { alert(err.message); }
   };
 
+  /* ------------------------- 제품 그룹 ------------------------- */
+
+  const openGroupModal = (g?: ProductGroup) => {
+    setEditingGroupId(g?.id ?? null);
+    setGroupInitial(g ? {
+      name: g.name, templateId: g.templateId, supplierId: g.supplierId || '', supplierName: g.supplierName || '',
+      shippingCost: g.shippingCost || 0, otherCost: g.otherCost || 0, marketFeeRate: g.marketFeeRate || 0,
+      vatType: g.vatType || 'taxable', bundleShipping: g.bundleShipping === true, memo: g.memo || '',
+    } : BLANK_PRODUCT_GROUP);
+    setIsGroupModalOpen(true);
+  };
+
+  const handleGroupSave = async (form: ProductGroupForm) => {
+    if (editingGroupId) await updateProductGroup(editingGroupId, form);
+    else await createProductGroup(form);
+    setIsGroupModalOpen(false);
+    await loadData();
+  };
+
+  const handleGroupDelete = async (g: ProductGroup) => {
+    const linked = productCountByGroup(g);
+    if (!window.confirm(
+      `'${g.name}' 그룹을 삭제하시겠습니까?\n\n` +
+      (linked > 0
+        ? `이 그룹의 제품 ${linked}개는 삭제되지 않습니다. 이미 각자 값을 갖고 있어 송장 출력도 그대로 됩니다.\n그룹 연결만 끊어집니다.`
+        : '연결된 제품이 없습니다.')
+    )) return;
+    try { await deleteProductGroup(g.id); await loadData(); }
+    catch (err: any) { alert('삭제 중 오류: ' + err.message); }
+  };
+
+  /** 그룹 설정을 소속 제품 전체에 다시 입힌다. 판매가·매입가는 건드리지 않는다. */
+  const handleGroupApply = async (g: ProductGroup) => {
+    const linked = productCountByGroup(g);
+    if (linked === 0) { alert('이 그룹에 연결된 제품이 없습니다.'); return; }
+    if (!window.confirm(
+      `'${g.name}' 그룹의 설정을 소속 제품 ${linked}개에 덮어씁니다.\n\n` +
+      '송장 양식 · 발주처 · 택배비용 · 기타비용 · 수수료율 · 과세 구분 · 묶음배송이 그룹 값으로 바뀝니다.\n' +
+      '제품별 판매가 · 매입가는 그대로 둡니다.\n\n진행할까요?'
+    )) return;
+    setApplyingGroupId(g.id);
+    try {
+      const changed = await applyGroupToProducts(g);
+      await loadData();
+      alert(`제품 ${changed}개에 적용했습니다.`);
+    } catch (err: any) { alert('적용 중 오류: ' + err.message); }
+    finally { setApplyingGroupId(null); }
+  };
+
+  /** 그룹별 제품 수 */
+  const productCountByGroup = (g: ProductGroup) => products.filter(p => p.groupId === g.id).length;
+
   const handleMigrateSuppliers = async () => {
     if (!window.confirm(
       '제품에 입력된 발주처명을 읽어 발주처 목록을 자동으로 만들고 연결합니다.\n' +
@@ -286,7 +372,12 @@ export const ProductManagement: React.FC = () => {
   )).filter(n => !suppliers.some(s => s.name.trim() === n));
   
   const handleTemplateDelete = async (id: string) => {
-    if (window.confirm('양식을 삭제하시겠습니까? 관련 제품의 송장 출력이 불가능해질 수 있습니다.')) {
+    // 양식을 지우면 그 양식을 쓰는 제품 그룹도 함께 사라진다 (DB 외래키 cascade).
+    const usingGroups = groups.filter(g => g.templateId === id);
+    const groupWarning = usingGroups.length > 0
+      ? `\n\n이 양식을 쓰는 제품 그룹 ${usingGroups.length}개(${usingGroups.map(g => g.name).join(', ')})도 함께 삭제됩니다.\n(그룹의 제품 자체는 지워지지 않습니다)`
+      : '';
+    if (window.confirm('양식을 삭제하시겠습니까? 관련 제품의 송장 출력이 불가능해질 수 있습니다.' + groupWarning)) {
       try {
         await deleteTemplate(id);
         loadData();
@@ -431,10 +522,10 @@ export const ProductManagement: React.FC = () => {
 
       <div className="mb-6">
         <nav className="flex space-x-8 border-b border-slate-200">
-          {['templates', 'suppliers', 'products', 'account'].map(t => (
+          {['templates', 'suppliers', 'groups', 'products', 'account'].map(t => (
             <button key={t} onClick={() => setActiveTab(t as any)} className={`${activeTab === t ? 'border-primary text-primary' : 'border-transparent text-slate-500'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 capitalize transition-all`}>
-              {t === 'templates' ? <FileSpreadsheet size={16} /> : t === 'suppliers' ? <Building2 size={16} /> : t === 'products' ? <Search size={16} /> : <UserCog size={16} />}
-              {t === 'templates' ? '송장 양식' : t === 'suppliers' ? '발주처' : t === 'products' ? '제품 목록 (CRM)' : '계정 정보'}
+              {t === 'templates' ? <FileSpreadsheet size={16} /> : t === 'suppliers' ? <Building2 size={16} /> : t === 'groups' ? <Layers size={16} /> : t === 'products' ? <Search size={16} /> : <UserCog size={16} />}
+              {t === 'templates' ? '송장 양식' : t === 'suppliers' ? '발주처' : t === 'groups' ? '제품 그룹' : t === 'products' ? '제품 목록 (CRM)' : '계정 정보'}
               {t === 'suppliers' && orphanSupplierNames.length > 0 && (
                 <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">{orphanSupplierNames.length}</span>
               )}
@@ -580,6 +671,114 @@ export const ProductManagement: React.FC = () => {
               </>
             )}
 
+            {/* Product Groups Tab */}
+            {activeTab === 'groups' && (
+              <>
+                {!schema.productGroups ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
+                    <h3 className="font-bold text-amber-900 flex items-center gap-2 mb-2"><AlertTriangle size={18}/> 제품 그룹 기능을 아직 쓸 수 없습니다</h3>
+                    <p className="text-sm text-amber-800 leading-relaxed">
+                      데이터베이스에 <code className="bg-white px-1.5 py-0.5 rounded border text-xs">product_groups</code> 테이블이 없습니다.
+                      프로젝트의 <code className="bg-white px-1.5 py-0.5 rounded border text-xs">supabase/migration.sql</code> 내용을
+                      Supabase 대시보드의 SQL Editor에 붙여넣고 실행한 뒤 아래 버튼을 눌러주세요.
+                      <br />기존 기능은 그대로 동작하며, 실행 전까지는 제품마다 송장 양식을 직접 고르면 됩니다.
+                    </p>
+                    <Button size="sm" className="mt-4" icon={<RefreshCw size={14}/>} onClick={() => { resetSchemaCache(); loadData(); }}>
+                      적용 여부 다시 확인
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        같은 발주처·같은 송장 양식으로 나가는 제품들을 한 그룹으로 묶어두면,
+                        제품을 새로 등록할 때 <b>그룹만 고르고 판매가·매입가만 입력</b>하면 됩니다.
+                        송장 양식은 그룹이 쓰는 것을 그대로 쓰므로 <b>엑셀을 다시 등록할 필요가 없습니다.</b>
+                      </p>
+                      <div className="shrink-0">
+                        <Button size="sm" onClick={() => openGroupModal()} icon={<Plus size={16} />} disabled={templates.length === 0}>그룹 등록</Button>
+                      </div>
+                    </div>
+
+                    {templates.length === 0 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 text-xs text-amber-800">
+                        먼저 <b>송장 양식</b> 탭에서 양식을 하나 이상 등록해주세요. 그룹은 양식 하나를 골라 묶는 방식입니다.
+                      </div>
+                    )}
+
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-50 border-b text-slate-500 font-bold uppercase tracking-wider">
+                            <tr>
+                              <th className="px-6 py-3">그룹명</th>
+                              <th className="px-6 py-3">발주처</th>
+                              <th className="px-6 py-3">송장 양식</th>
+                              <th className="px-6 py-3 text-right">택배비</th>
+                              <th className="px-6 py-3 text-right">기타비</th>
+                              <th className="px-6 py-3 text-right">수수료</th>
+                              <th className="px-6 py-3 text-center">과세</th>
+                              <th className="px-6 py-3 text-right">소속 제품</th>
+                              <th className="px-6 py-3 text-right">관리</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {groups.length === 0 && (
+                              <tr><td colSpan={9} className="px-6 py-10 text-center text-slate-400">
+                                등록된 그룹이 없습니다. '그룹 등록'으로 공통 설정을 한 번만 저장해두세요.
+                              </td></tr>
+                            )}
+                            {groups.map(g => (
+                              <tr key={g.id} className="hover:bg-slate-50">
+                                <td className="px-6 py-4 font-bold text-slate-800">
+                                  {g.name}
+                                  {g.bundleShipping && (
+                                    <span className="ml-1.5 px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 text-[10px] font-bold align-middle">묶음</span>
+                                  )}
+                                  {g.memo && <div className="text-[10px] font-normal text-slate-400 mt-0.5">{g.memo}</div>}
+                                </td>
+                                <td className="px-6 py-4">{g.supplierName || '-'}</td>
+                                <td className="px-6 py-4">
+                                  {templates.find(t => t.id === g.templateId)?.name
+                                    || <span className="text-red-500">삭제된 양식</span>}
+                                </td>
+                                <td className="px-6 py-4 text-right font-mono text-slate-500">{(g.shippingCost || 0).toLocaleString()}</td>
+                                <td className="px-6 py-4 text-right font-mono text-slate-500">{(g.otherCost || 0).toLocaleString()}</td>
+                                <td className="px-6 py-4 text-right font-mono text-slate-500">{g.marketFeeRate || 0}%</td>
+                                <td className="px-6 py-4 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${g.vatType === 'exempt' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-600'}`}>
+                                    {g.vatType === 'exempt' ? '면세' : '과세'}
+                                  </span>
+                                </td>
+                                <td className="px-6 py-4 text-right font-mono">{productCountByGroup(g)}</td>
+                                <td className="px-6 py-4 text-right">
+                                  <div className="flex justify-end gap-2">
+                                    <button onClick={() => handleGroupApply(g)} disabled={applyingGroupId === g.id}
+                                      title="이 그룹 설정을 소속 제품 전체에 다시 적용"
+                                      className="p-1.5 text-slate-400 hover:text-indigo-600 disabled:opacity-40">
+                                      {applyingGroupId === g.id ? <RefreshCw size={16} className="animate-spin" /> : <Wand2 size={16} />}
+                                    </button>
+                                    <button onClick={() => openGroupModal(g)} className="p-1.5 text-slate-400 hover:text-blue-600"><Pencil size={16} /></button>
+                                    <button onClick={() => handleGroupDelete(g)} className="p-1.5 text-slate-400 hover:text-red-600"><Trash2 size={16} /></button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-slate-400 mt-3 leading-relaxed">
+                      그룹은 <b>제품 등록 폼의 기본값</b>입니다. 저장되는 순간 값은 제품에 복사되므로,
+                      제품 하나만 택배비가 다르면 그 제품에서 고쳐도 그룹은 영향을 받지 않습니다.
+                      반대로 그룹 설정을 바꾼 뒤 소속 제품에 다시 입히려면 <Wand2 size={11} className="inline align-text-top" /> 버튼을 누르세요.
+                    </p>
+                  </>
+                )}
+              </>
+            )}
+
             {/* Products Tab (Financials Added) */}
             {activeTab === 'products' && (
               <>
@@ -607,6 +806,7 @@ export const ProductManagement: React.FC = () => {
                             <th className="px-6 py-3">SKU</th>
                             <th className="px-6 py-3">제품명</th>
                             <th className="px-6 py-3">발주처</th>
+                            {schema.productGroups && <th className="px-6 py-3">그룹</th>}
                             <th className="px-6 py-3 text-right">매입가</th>
                             <th className="px-6 py-3 text-right">판매가</th>
                             <th className="px-6 py-3 text-right text-indigo-600">예상마진</th>
@@ -625,6 +825,13 @@ export const ProductManagement: React.FC = () => {
                                 )}
                               </td>
                               <td className="px-6 py-4">{p.supplierName}</td>
+                              {schema.productGroups && (
+                                <td className="px-6 py-4">
+                                  {p.groupId
+                                    ? <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[10px] font-bold">{groups.find(g => g.id === p.groupId)?.name || '삭제된 그룹'}</span>
+                                    : <span className="text-slate-300">-</span>}
+                                </td>
+                              )}
                               <td className="px-6 py-4 text-right font-mono text-slate-500">{p.purchaseCost?.toLocaleString()}</td>
                               <td className="px-6 py-4 text-right font-mono font-bold">{p.salesPrice?.toLocaleString()}</td>
                               <td className="px-6 py-4 text-right font-mono text-indigo-600 font-bold">
@@ -685,6 +892,24 @@ export const ProductManagement: React.FC = () => {
               <div className="space-y-4 md:col-span-2">
                 <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2 pb-2 border-b"><PackageCheck size={16}/> 기본 제품 정보</h4>
               </div>
+
+              {schema.productGroups && (
+                <div className="md:col-span-2 bg-indigo-50 border border-indigo-100 rounded-lg p-3">
+                  <label className="text-[11px] font-bold text-indigo-800 mb-1.5 block flex items-center gap-1.5">
+                    <Layers size={13} /> 제품 그룹
+                  </label>
+                  <select className="w-full rounded-lg border border-indigo-200 px-3 py-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/20"
+                    value={newGroupId} onChange={e => handleGroupPick(e.target.value)}>
+                    <option value="">그룹 없음 (직접 입력)</option>
+                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                  <p className="text-[10px] text-indigo-500 mt-1.5 leading-relaxed">
+                    {groups.length === 0
+                      ? "'제품 그룹' 탭에서 그룹을 먼저 만들면, 여기서 고르는 것만으로 송장 양식·발주처·비용이 자동으로 채워집니다."
+                      : '고르면 송장 양식 · 발주처 · 택배비 · 기타비용 · 수수료율 · 과세 · 묶음배송이 자동으로 채워집니다. 이 제품만 다르면 아래에서 고치세요.'}
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className="text-[11px] font-bold text-slate-500 mb-1.5 block">SKU (필수)</label>
@@ -829,11 +1054,27 @@ export const ProductManagement: React.FC = () => {
         onSave={handleSupplierSave}
       />
 
+      <ProductGroupFormModal
+        key={editingGroupId ?? 'new-group'}
+        open={isGroupModalOpen}
+        editing={!!editingGroupId}
+        initial={groupInitial}
+        takenNames={groups.filter(g => g.id !== editingGroupId).map(g => g.name)}
+        templates={templates}
+        suppliers={suppliers}
+        useSupplierMaster={schema.suppliers}
+        vatSupported={schema.productVat}
+        bundleSupported={schema.productBundle}
+        onClose={() => setIsGroupModalOpen(false)}
+        onSave={handleGroupSave}
+      />
+
       <BulkProductImport
         open={isBulkModalOpen}
         onClose={() => setIsBulkModalOpen(false)}
         templates={templates}
         suppliers={suppliers}
+        groups={groups}
         existingProducts={products}
         useSupplierMaster={schema.suppliers}
         bundleSupported={schema.productBundle}
