@@ -75,6 +75,17 @@ export const SIMILARITY_THRESHOLD = 0.75;
 export const normalizeAddress = (s: unknown): string =>
   normalizeHeader(String(s ?? '').replace(/(\d)\s*(동|호|층|번지)/g, '$1'));
 
+/**
+ * 전화번호 비교용 정규화. 묶음배송에서 같은 사람인지 판단할 때 쓴다.
+ *
+ * "010-1234-5678" / "010.1234.5678" / "010 1234 5678" / "01012345678" 은 모두 같은 번호다.
+ * 숫자만 남기고, 국가번호(+82 10…)로 적힌 것은 0으로 시작하게 되돌린다.
+ */
+export const normalizePhone = (s: unknown): string => {
+  const d = String(s ?? '').replace(/\D/g, '');
+  return d.startsWith('82') && d.length >= 11 ? '0' + d.slice(2).replace(/^0/, '') : d;
+};
+
 export interface ResolveOptions {
   /** 양식 열별 별칭. headers 와 같은 순서 */
   aliases?: string[][];

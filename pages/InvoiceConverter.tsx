@@ -6,7 +6,7 @@ import { UploadCloud, FileSpreadsheet, ArrowRight, Download, AlertCircle, CheckC
 import { Button } from '../components/Button';
 import { fetchProducts, fetchTemplates, fetchAppSettings, AppSettings, saveSalesRecords, deleteOldestSalesRecords, SalesSaveResult, fetchSuppliers, updateTemplate, getSchemaSupport } from '../services/dbService';
 import { InvoiceRow, MatchedOrder, Product, ColumnMapping, SalesRecord, Supplier, InvoiceTemplate } from '../types';
-import { resolveHeaders, needsReview, toLookup, KIND_LABEL, HeaderResolution, normalizeHeader, normalizeAddress } from '../services/headerMatch';
+import { resolveHeaders, needsReview, toLookup, KIND_LABEL, HeaderResolution, normalizeHeader, normalizeAddress, normalizePhone } from '../services/headerMatch';
 import { calcProductProfit, AmountBreakdown, emptyBreakdown } from '../services/calc';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -96,7 +96,7 @@ export const InvoiceConverter: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isFolderSaving, setIsFolderSaving] = useState(false);
-  const [mapping, setMapping] = useState<ColumnMapping>({ sku: '', productName: '', orderer: '', receiver: '', option: '', quantity: '', orderId: '', address: '' });
+  const [mapping, setMapping] = useState<ColumnMapping>({ sku: '', productName: '', orderer: '', receiver: '', option: '', quantity: '', orderId: '', address: '', receiverPhone: '' });
   const [matchedData, setMatchedData] = useState<MatchedOrder[]>([]);
   const [dbProducts, setDbProducts] = useState<Product[]>([]);
   const [appSettings, setAppSettings] = useState<AppSettings>({
@@ -186,7 +186,7 @@ export const InvoiceConverter: React.FC = () => {
          * '상품발주번호' 대신 앞에 있는 '주문번호' 가 잡혀 버린다.
          */
         const findMatch = (hdrs: string[], synonyms: string[]) => {
-            const clean = (s: string) => String(s).replace(/[s_]+/g, '').toLowerCase();
+            const clean = (s: string) => String(s).replace(/[\s_]+/g, '').toLowerCase();
             const synClean = synonyms.map(clean);
             // 1. 정확히 일치
             for (const syn of synClean) {
@@ -201,17 +201,30 @@ export const InvoiceConverter: React.FC = () => {
             return '';
         };
 
+        /**
+         * 수취인 전화번호 열. findMatch 의 부분 일치를 쓰면 '수취인' 열이 '수취인연락처' 에
+         * 포함된다고 보고 이름 열이 잡혀 버리므로, 받는 쪽 단어와 전화 단어가 둘 다 있는 열만 고른다.
+         * 주문자 연락처가 잡히지 않도록 받는 쪽 단어가 없는 '연락처' 만으로는 고르지 않는다.
+         */
+        const findReceiverPhone = (hdrs: string[]) => {
+            const clean = (s: string) => String(s).replace(/[\s_]+/g, '').toLowerCase();
+            const who = ['수취인', '수령인', '수령자', '받는', '받으시는', '수화인', '수하인', '배송지'];
+            const tel = ['휴대폰', '핸드폰', '휴대전화', '연락처', '전화', '폰', 'phone', 'tel', 'mobile'];
+            return hdrs.find(h => { const c = clean(h); return who.some(w => c.includes(w)) && tel.some(t => c.includes(t)); }) ?? '';
+        };
+
         setMapping({
             sku: findMatch(uniqueHeaders, ['옵션id', '옵션번호', 'sku', '상품번호', '상품코드', '옵션코드', '품목코드', '자체상품코드', '판매자상품코드', '외부상품코드', '상품id', '아이디']),
             productName: findMatch(uniqueHeaders, ['등록상품명', '상품명', '제품명', '등록제품명', '옵션명', '품목명', '물품명', 'productname', 'itemname']),
-            orderer: findMatch(uniqueHeaders, ['주문자', '구매자', '주문자명', '구매자명', '주문자이름', '구매자이름', '주문하시는분', '주문인']),
-            receiver: findMatch(uniqueHeaders, ['수취인', '받는사람', '수취인명', '수취인성명', '수취인이름', '받으시는분', '수령인', '수령자']),
+            orderer: findMatch(uniqueHeaders, ['주문자', '구매자', '주문자명', '구매자명', '주문자이름', '구매자이름', '주문하시는분', '주문인', '보내는사람', '보내는분', '보내시는분', '발송인', '발송자', '송화인', '송하인']),
+            receiver: findMatch(uniqueHeaders, ['수취인', '받는사람', '수취인명', '수취인성명', '수취인이름', '받으시는분', '받는분', '수령인', '수령자', '수화인', '수하인']),
             // 한 주문번호로 여러 명에게 보내는 주문(선물)이 흔하다.
             // 중복 판정에 쓰이므로 '행마다 고유한' 번호를 먼저 고른다.
             orderId: findMatch(uniqueHeaders, ['상품발주번호', '상품주문번호', '발주번호', '주문상세번호', '주문번호', '상품오더번호', '오더번호', '결제번호', 'orderno']),
             quantity: findMatch(uniqueHeaders, ['수량', '구매수', '구매수량', '구매량', '주문수량', 'qty', 'quantity', '주문건수']),
             option: findMatch(uniqueHeaders, ['옵션정보', '선택옵션', '상품옵션', '옵션', '옵션명', '옵션내용']),
-            address: findMatch(uniqueHeaders, ['수령자주소', '수취인주소', '배송지주소', '수령인주소', '배송주소', '주소', '배송지', 'address'])
+            address: findMatch(uniqueHeaders, ['수령자주소', '수취인주소', '배송지주소', '수령인주소', '배송주소', '주소', '배송지', 'address']),
+            receiverPhone: findReceiverPhone(uniqueHeaders),
         });
 
         setHeaders(uniqueHeaders);
@@ -371,21 +384,25 @@ export const InvoiceConverter: React.FC = () => {
   };
 
   /* ── 묶음배송 ────────────────────────────────────────────────────────────
-   * 같은 발주처 · 같은 수취인 · 같은 주소로 가는 주문 중, 제품에 '묶음배송 가능'이
+   * 같은 발주처 · 같은 수취인 · 같은 전화번호 · 같은 주소로 가는 주문 중, 제품에 '묶음배송 가능'이
    * 켜진 것끼리만 송장 한 장으로 합친다. 묶음불가 제품은 지금처럼 각각 한 장씩 나간다.
+   * 전화번호는 구분자(-, ., 공백)를 빼고 숫자만 비교한다.
    * 정산요약과 CRM 저장은 합치지 않는다 — 매입가·마진은 제품별로 계산해야 맞다.
    */
   const bundleKeyOf = (o: MatchedOrder) => {
     const rev = normalizeHeader(o.originalData[mapping.receiver]);
+    const phone = normalizePhone(o.originalData[mapping.receiverPhone]);
     const addr = normalizeAddress(o.originalData[mapping.address]);
-    return rev && addr ? `${rev}|${addr}` : '';   // 하나라도 비면 묶지 않는다
+    return rev && phone && addr ? `${rev}|${phone}|${addr}` : '';   // 하나라도 비면 묶지 않는다
   };
 
-  const bundleReady = applyBundle && !!mapping.address;
+  /** 묶음배송에 필요한 열(주소 · 수취인 전화번호)이 모두 지정됐는지 */
+  const bundleColumnsSet = !!mapping.address && !!mapping.receiverPhone;
+  const bundleReady = applyBundle && bundleColumnsSet;
 
   /** 이번 변환에서 실제로 몇 건이 몇 장으로 합쳐지는지 */
   const bundlePreview = useMemo(() => {
-    if (!mapping.address) return { orders: 0, invoices: 0 };
+    if (!bundleColumnsSet) return { orders: 0, invoices: 0 };
     const buckets = new Map<string, number>();
     matchedData.forEach(o => {
       if (o.status !== 'matched' || !o.product?.bundleShipping) return;
@@ -397,7 +414,7 @@ export const InvoiceConverter: React.FC = () => {
     let orders = 0, invoices = 0;
     buckets.forEach(n => { if (n >= 2) { orders += n; invoices += 1; } });
     return { orders, invoices };
-  }, [matchedData, mapping.address, mapping.receiver]);
+  }, [matchedData, mapping.address, mapping.receiver, mapping.receiverPhone]);
 
   /**
    * 한 발주처 파일에 들어갈 행들을 만든다.
@@ -422,7 +439,7 @@ export const InvoiceConverter: React.FC = () => {
     const asCell = (h: string, v: any) => {
       if (!isNumericCol(h)) return v;
       const t = String(v ?? '').trim().replace(/,/g, '');
-      return t !== '' && /^-?d+(.d+)?$/.test(t) ? Number(t) : v;
+      return t !== '' && /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : v;
     };
 
     // 묶을 수 있는 것만 골라 수취인+주소로 모은다. 나머지는 순서를 지켜 그대로 둔다.
@@ -440,12 +457,17 @@ export const InvoiceConverter: React.FC = () => {
     const rows: { rowData: any[]; orders: MatchedOrder[] }[] = [];
 
     const nameOf = (o: MatchedOrder) => getResolvedProductName(o).name;
-    const senderSuffix = (orders: MatchedOrder[], rev: string) => {
-      const senders = Array.from(new Set(
-        orders.map(o => String(o.originalData[mapping.orderer] || '').trim()).filter(v => v && v !== rev),
-      ));
-      return senders.length > 0 ? ` 보내는 사람_${senders.join('/')}` : '';
-    };
+    /** 수취인과 다른 주문자(보내는 사람)들 */
+    const sendersOf = (orders: MatchedOrder[], rev: string) => Array.from(new Set(
+      orders.map(o => String(o.originalData[mapping.orderer] || '').trim()).filter(v => v && v !== rev),
+    ));
+    const senderSuffix = (senders: string[]) =>
+      senders.length > 0 ? ` 보내는 사람_${senders.join('/')}` : '';
+    /** 양식에서 수취인 이름이 들어가는 열 — 보내는 사람이 다르면 이름 옆 괄호에 붙인다 */
+    const isReceiverCol = (h: string) =>
+      !!mapping.receiver && (lookups[group.templateId]?.[h] ?? h) === mapping.receiver;
+    const withSenders = (v: any, senders: string[]) =>
+      senders.length > 0 && String(v ?? '').trim() ? `${String(v).trim()}(${senders.join('/')})` : v;
 
     for (const step of plan) {
       const bucket = step.key ? buckets.get(step.key)! : null;
@@ -456,9 +478,13 @@ export const InvoiceConverter: React.FC = () => {
         const rev = String(o.originalData[mapping.receiver] || '').trim();
         let finalName = nameOf(o);
         if (o.quantity > 1) finalName += ` (${o.quantity}개)`;
-        finalName += senderSuffix([o], rev);
-        const rowData = tpl.headers.map((h: string) =>
-          isProductCol(h) ? finalName : asCell(h, cellValue(o, group.templateId, h)));
+        const senders = sendersOf([o], rev);
+        finalName += senderSuffix(senders);
+        const rowData = tpl.headers.map((h: string) => {
+          if (isProductCol(h)) return finalName;
+          if (isReceiverCol(h)) return withSenders(cellValue(o, group.templateId, h), senders);
+          return asCell(h, cellValue(o, group.templateId, h));
+        });
         rows.push({ rowData, orders: [o] });
         continue;
       }
@@ -472,10 +498,12 @@ export const InvoiceConverter: React.FC = () => {
       const merged = new Map<string, number>();
       bucket.forEach(o => merged.set(nameOf(o), (merged.get(nameOf(o)) ?? 0) + o.quantity));
       let finalName = Array.from(merged.entries()).map(([n, q]) => `${n}(${q})`).join(', ');
-      finalName += senderSuffix(bucket, rev);
+      const senders = sendersOf(bucket, rev);
+      finalName += senderSuffix(senders);
 
       const rowData = tpl.headers.map((h: string) => {
         if (isProductCol(h)) return finalName;
+        if (isReceiverCol(h)) return withSenders(cellValue(head, group.templateId, h), senders);
         if (isQtyCol(h)) return 1;            // 송장 한 장 = 박스 하나
         return asCell(h, cellValue(head, group.templateId, h));
       });
@@ -516,6 +544,7 @@ export const InvoiceConverter: React.FC = () => {
           '발주처': group.supplier,
           '송장양식': tpl.name,
           '수취인': cell(head, mapping.receiver),
+          '수취인전화': cell(head, mapping.receiverPhone),
           '주소': cell(head, mapping.address),
           '송장에찍힌품목': i === 0 ? mergedName : '',
           'SKU': o.product?.sku ?? '',
@@ -524,6 +553,7 @@ export const InvoiceConverter: React.FC = () => {
           '주문번호': mapping.orderId ? cell(o, mapping.orderId) : '',
           '주문자': cell(o, mapping.orderer),
           '원본수취인': cell(o, mapping.receiver),
+          '원본전화': cell(o, mapping.receiverPhone),
           '원본주소': cell(o, mapping.address),
         });
       });
@@ -623,9 +653,9 @@ export const InvoiceConverter: React.FC = () => {
       // 합쳐진 건이 있을 때만 붙인다. 없으면 빈 시트가 생겨 헷갈린다.
       if (bundleLog.length > 0) {
         const logWs = XLSX.utils.json_to_sheet(bundleLog);
-        logWs['!cols'] = [{ wch: 8 }, { wch: 8 }, { wch: 6 }, { wch: 16 }, { wch: 14 }, { wch: 12 },
+        logWs['!cols'] = [{ wch: 8 }, { wch: 8 }, { wch: 6 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 14 },
                           { wch: 34 }, { wch: 30 }, { wch: 16 }, { wch: 22 }, { wch: 6 },
-                          { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }];
+                          { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 34 }];
         XLSX.utils.book_append_sheet(summaryWb, logWs, "묶음내역");
       }
       zip.file(`${datePath}/00_정산요약_${now.getDate()}.xlsx`, XLSX.write(summaryWb, { bookType: 'xlsx', type: 'array' }));
@@ -782,9 +812,9 @@ export const InvoiceConverter: React.FC = () => {
           XLSX.utils.book_append_sheet(sWb, XLSX.utils.json_to_sheet(summaryRows(merged)), "정산요약");
           if (folderBundleLog.length > 0) {
             const logWs = XLSX.utils.json_to_sheet(folderBundleLog);
-            logWs['!cols'] = [{ wch: 8 }, { wch: 8 }, { wch: 6 }, { wch: 16 }, { wch: 14 }, { wch: 12 },
+            logWs['!cols'] = [{ wch: 8 }, { wch: 8 }, { wch: 6 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 14 },
                               { wch: 34 }, { wch: 30 }, { wch: 16 }, { wch: 22 }, { wch: 6 },
-                              { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 34 }];
+                              { wch: 24 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 34 }];
             XLSX.utils.book_append_sheet(sWb, logWs, "묶음내역");
           }
           const sfh = await targetDir.getFileHandle(summaryFileName, { create: true });
@@ -839,6 +869,7 @@ export const InvoiceConverter: React.FC = () => {
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-500" title="한 주문번호로 여러 명에게 보내는 경우가 있습니다. 행마다 다른 번호(상품발주번호 등)를 고르세요">주문번호 열 (선택-중복방지)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.orderId} onChange={e => setMapping({...mapping, orderId: e.target.value})}><option value="">안함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-500">수량 열 (선택)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.quantity} onChange={e => setMapping({...mapping, quantity: e.target.value})}><option value="">1개로 가정</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-500">주소 열 (선택-묶음배송)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.address} onChange={e => setMapping({...mapping, address: e.target.value})}><option value="">안함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
+                <div><label className="block text-[11px] font-bold mb-1 text-slate-500" title="묶음배송은 수취인 · 전화번호 · 주소가 모두 같을 때만 합칩니다. 010-1234-5678 과 01012345678 은 같은 번호로 봅니다">수취인 전화번호 열 (선택-묶음배송)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.receiverPhone} onChange={e => setMapping({...mapping, receiverPhone: e.target.value})}><option value="">안함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
                 <div><label className="block text-[11px] font-bold mb-1 text-slate-500">옵션 열 (선택)</label><select className="w-full rounded border-slate-300 text-xs py-1.5" value={mapping.option} onChange={e => setMapping({...mapping, option: e.target.value})}><option value="">안함</option>{headers.map(h => <option key={h} value={h}>{h}</option>)}</select></div>
             </div>
             <div className="flex justify-end pt-3 border-t"><Button size="sm" disabled={!mapping.sku || !mapping.productName || !mapping.orderer || !mapping.receiver} onClick={processMatching}>변환 시작</Button></div>
@@ -890,7 +921,7 @@ export const InvoiceConverter: React.FC = () => {
                         className="mt-0.5 rounded border-slate-300" />
                       <span className="text-[11px] leading-relaxed text-slate-700">
                         <b className="text-slate-900">묶음배송으로 합치기</b> —
-                        같은 발주처 · 같은 수취인 · 같은 주소로 가는 주문
+                        같은 발주처 · 같은 수취인 · 같은 전화번호 · 같은 주소로 가는 주문
                         <b className="text-blue-700"> {bundlePreview.orders}건</b>을
                         송장 <b className="text-blue-700">{bundlePreview.invoices}장</b>으로 합칩니다.<br />
                         품목 칸에 <span className="font-mono bg-white px-1 rounded border">고추(1), 살코기(2)</span> 처럼 적히고 수량은 1로 나갑니다.
@@ -900,10 +931,10 @@ export const InvoiceConverter: React.FC = () => {
                     </label>
                   </div>
                 )}
-                {!mapping.address && matchedData.some(o => o.product?.bundleShipping) && (
+                {!bundleColumnsSet && matchedData.some(o => o.product?.bundleShipping) && (
                   <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-6 text-[11px] text-slate-500">
-                    묶음배송 가능 제품이 있지만 <b>주소 열</b>을 지정하지 않아 합치지 않았습니다.
-                    합치시려면 이전 단계에서 주소 열을 골라주세요.
+                    묶음배송 가능 제품이 있지만 <b>{[!mapping.address && '주소 열', !mapping.receiverPhone && '수취인 전화번호 열'].filter(Boolean).join(' · ')}</b>을 지정하지 않아 합치지 않았습니다.
+                    합치시려면 이전 단계에서 골라주세요.
                   </div>
                 )}
 

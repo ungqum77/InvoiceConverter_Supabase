@@ -131,6 +131,7 @@ export interface ColumnMapping {
   quantity: string; // (New) 수량 열
   orderId: string; // (New) 주문번호 열
   address: string; // (New) 주소 열 — 묶음배송 판단에 사용
+  receiverPhone: string; // 수취인 전화번호 열 — 묶음배송 판단에 사용
 }
 
 export interface Tier {

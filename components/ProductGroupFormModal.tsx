@@ -180,7 +180,7 @@ export const ProductGroupFormModal: React.FC<Props> = ({
                 className="mt-0.5 rounded border-slate-300" />
               <span className="text-[11px] leading-relaxed text-slate-600">
                 <b className="text-slate-800">묶음배송 가능</b><br />
-                같은 발주처의 다른 묶음배송 가능 제품과 <b>수취인·주소가 같으면</b> 송장 한 장으로 합칩니다.
+                같은 발주처의 다른 묶음배송 가능 제품과 <b>수취인·전화번호·주소가 같으면</b> 송장 한 장으로 합칩니다.
                 냉동·생선처럼 따로 보내야 하는 그룹은 꺼두세요.
               </span>
             </label>

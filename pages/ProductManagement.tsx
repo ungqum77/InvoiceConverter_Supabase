@@ -821,7 +821,7 @@ export const ProductManagement: React.FC = () => {
                                 {p.name}
                                 {p.bundleShipping && (
                                   <span className="ml-1.5 px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 text-[10px] font-bold align-middle"
-                                    title="같은 수취인·주소면 송장 한 장으로 묶습니다">묶음</span>
+                                    title="같은 수취인·전화번호·주소면 송장 한 장으로 묶습니다">묶음</span>
                                 )}
                               </td>
                               <td className="px-6 py-4">{p.supplierName}</td>
@@ -992,7 +992,7 @@ export const ProductManagement: React.FC = () => {
                     className="mt-0.5 rounded border-slate-300" />
                   <span className="text-[11px] leading-relaxed text-slate-600">
                     <b className="text-slate-800">묶음배송 가능</b><br />
-                    같은 발주처의 다른 묶음배송 가능 제품과 <b>수취인·주소가 같으면</b> 송장 한 장으로 합칩니다.
+                    같은 발주처의 다른 묶음배송 가능 제품과 <b>수취인·전화번호·주소가 같으면</b> 송장 한 장으로 합칩니다.
                     냉동·생선처럼 따로 보내야 하는 제품은 꺼두세요.
                   </span>
                 </label>
